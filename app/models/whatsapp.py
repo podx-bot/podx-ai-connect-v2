@@ -10,6 +10,16 @@ class IncomingTextMessage:
 
 
 @dataclass(frozen=True)
+class IncomingLocationMessage:
+    provider_message_id: str
+    sender_mobile: str
+    latitude: float
+    longitude: float
+    name: Optional[str]
+    address: Optional[str]
+
+
+@dataclass(frozen=True)
 class DeliveryStatus:
     provider_message_id: str
     recipient_mobile: Optional[str]
