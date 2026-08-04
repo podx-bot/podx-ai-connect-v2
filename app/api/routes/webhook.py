@@ -5,6 +5,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.whatsapp.payload_parser import (
     extract_delivery_statuses,
+    extract_location_messages,
     extract_text_messages
 )
 
@@ -52,7 +53,8 @@ async def receive_webhook(request: Request) -> dict:
     payload = await request.json()
 
     statuses = extract_delivery_statuses(payload)
-    messages = extract_text_messages(payload)
+    text_messages = extract_text_messages(payload)
+    location_messages = extract_location_messages(payload)
 
     for status in statuses:
         container.delivery_log_repository.save_status(
@@ -64,7 +66,7 @@ async def receive_webhook(request: Request) -> dict:
 
     replies = []
 
-    for incoming in messages:
+    for incoming in text_messages:
         if container.inbound_message_repository.exists(
             incoming.provider_message_id
         ):
@@ -88,7 +90,58 @@ async def receive_webhook(request: Request) -> dict:
 
         replies.append(
             {
+                "message_type": "text",
                 "sender_mobile": incoming.sender_mobile,
+                "reply": reply_text,
+                "send_result": send_result
+            }
+        )
+
+    for incoming in location_messages:
+        if container.inbound_message_repository.exists(
+            incoming.provider_message_id
+        ):
+            continue
+
+        location_log = (
+            "LOCATION:"
+            f"{incoming.latitude:.7f},"
+            f"{incoming.longitude:.7f}"
+        )
+
+        container.inbound_message_repository.save(
+            provider_message_id=incoming.provider_message_id,
+            sender_mobile=incoming.sender_mobile,
+            message_text=location_log
+        )
+
+        container.user_repository.save_location(
+            whatsapp_mobile=incoming.sender_mobile,
+            latitude=incoming.latitude,
+            longitude=incoming.longitude,
+            location_name=incoming.name,
+            location_address=incoming.address
+        )
+
+        reply_text = (
+            "✅ మీ location విజయవంతంగా save అయింది.\n"
+            f"📍 Latitude: {incoming.latitude:.6f}\n"
+            f"📍 Longitude: {incoming.longitude:.6f}\n\n"
+            "ఇకపై nearby jobs మరియు workers matching కోసం "
+            "ఈ location ఉపయోగిస్తాం."
+        )
+
+        send_result = container.whatsapp_service.send_text_message(
+            recipient_mobile=incoming.sender_mobile,
+            message=reply_text
+        )
+
+        replies.append(
+            {
+                "message_type": "location",
+                "sender_mobile": incoming.sender_mobile,
+                "latitude": incoming.latitude,
+                "longitude": incoming.longitude,
                 "reply": reply_text,
                 "send_result": send_result
             }
@@ -96,7 +149,8 @@ async def receive_webhook(request: Request) -> dict:
 
     return {
         "status": "processed",
-        "incoming_message_count": len(messages),
+        "incoming_text_count": len(text_messages),
+        "incoming_location_count": len(location_messages),
         "delivery_status_count": len(statuses),
         "replies": replies
     }
