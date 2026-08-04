@@ -58,3 +58,41 @@ class UserRepository:
                 area
             )
         )
+
+    def save_location(
+        self,
+        whatsapp_mobile: str,
+        latitude: float,
+        longitude: float,
+        location_name: Optional[str] = None,
+        location_address: Optional[str] = None
+    ) -> None:
+        self.database.execute(
+            """
+            INSERT INTO users (
+                whatsapp_mobile,
+                latitude,
+                longitude,
+                location_name,
+                location_address,
+                location_updated_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(whatsapp_mobile)
+            DO UPDATE SET
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                location_name = excluded.location_name,
+                location_address = excluded.location_address,
+                location_updated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                whatsapp_mobile,
+                latitude,
+                longitude,
+                location_name,
+                location_address
+            )
+        )
