@@ -51,6 +51,28 @@ class Database:
                 tuple(parameters)
             ).fetchall()
 
+    def _column_exists(
+        self,
+        table_name: str,
+        column_name: str
+    ) -> bool:
+        rows = self.fetchall(f"PRAGMA table_info({table_name})")
+        return any(row["name"] == column_name for row in rows)
+
+    def _add_column_if_missing(
+        self,
+        table_name: str,
+        column_name: str,
+        column_definition: str
+    ) -> None:
+        if self._column_exists(table_name, column_name):
+            return
+
+        self.execute(
+            f"ALTER TABLE {table_name} "
+            f"ADD COLUMN {column_name} {column_definition}"
+        )
+
     def create_tables(self) -> None:
         self.execute(
             """
@@ -61,11 +83,42 @@ class Database:
                 name TEXT,
                 language TEXT,
                 area TEXT,
+                latitude REAL,
+                longitude REAL,
+                location_name TEXT,
+                location_address TEXT,
+                location_updated_at TEXT,
                 registration_complete INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+
+        self._add_column_if_missing(
+            "users",
+            "latitude",
+            "REAL"
+        )
+        self._add_column_if_missing(
+            "users",
+            "longitude",
+            "REAL"
+        )
+        self._add_column_if_missing(
+            "users",
+            "location_name",
+            "TEXT"
+        )
+        self._add_column_if_missing(
+            "users",
+            "location_address",
+            "TEXT"
+        )
+        self._add_column_if_missing(
+            "users",
+            "location_updated_at",
+            "TEXT"
         )
 
         self.execute(
