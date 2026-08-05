@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
+from app.models.session import ConversationStep
 from app.whatsapp.payload_parser import (
     extract_delivery_statuses,
     extract_location_messages,
@@ -14,16 +15,10 @@ router = APIRouter(tags=["WhatsApp"])
 logger = logging.getLogger("podx.whatsapp.webhook")
 
 
-@router.get(
-    "/webhook",
-    response_class=PlainTextResponse
-)
+@router.get("/webhook", response_class=PlainTextResponse)
 def verify_webhook(
     request: Request,
-    hub_mode: Optional[str] = Query(
-        default=None,
-        alias="hub.mode"
-    ),
+    hub_mode: Optional[str] = Query(default=None, alias="hub.mode"),
     hub_verify_token: Optional[str] = Query(
         default=None,
         alias="hub.verify_token"
@@ -34,7 +29,6 @@ def verify_webhook(
     )
 ):
     container = request.app.state.container
-
     if (
         hub_mode == "subscribe"
         and hub_verify_token
@@ -75,24 +69,12 @@ async def receive_webhook(request: Request) -> dict:
         len(statuses)
     )
 
-    if not statuses and not text_messages and not location_messages:
-        logger.info(
-            "WHATSAPP INCOMING: ignored payload object=%s",
-            payload.get("object")
-        )
-
     for status in statuses:
         container.delivery_log_repository.save_status(
             provider_message_id=status.provider_message_id,
             recipient_mobile=status.recipient_mobile,
             status=status.status,
             error_message=status.error_message
-        )
-        logger.info(
-            "WHATSAPP DELIVERY STATUS: id=%s status=%s recipient=%s",
-            status.provider_message_id,
-            status.status,
-            status.recipient_mobile
         )
 
     replies = []
@@ -101,18 +83,7 @@ async def receive_webhook(request: Request) -> dict:
         if container.inbound_message_repository.exists(
             incoming.provider_message_id
         ):
-            logger.info(
-                "WHATSAPP DUPLICATE TEXT SKIPPED: id=%s",
-                incoming.provider_message_id
-            )
             continue
-
-        logger.info(
-            "WHATSAPP TEXT: sender=%s id=%s text=%s",
-            incoming.sender_mobile,
-            incoming.provider_message_id,
-            incoming.message_text
-        )
 
         container.inbound_message_repository.save(
             provider_message_id=incoming.provider_message_id,
@@ -124,55 +95,35 @@ async def receive_webhook(request: Request) -> dict:
             sender_mobile=incoming.sender_mobile,
             message=incoming.message_text
         )
-
         send_result = container.whatsapp_service.send_text_message(
             recipient_mobile=incoming.sender_mobile,
             message=reply_text
         )
-
         logger.info(
-            "WHATSAPP SEND RESULT: sender=%s result=%s",
+            "WHATSAPP TEXT SEND RESULT: sender=%s result=%s",
             incoming.sender_mobile,
             send_result
         )
-
-        replies.append(
-            {
-                "message_type": "text",
-                "sender_mobile": incoming.sender_mobile,
-                "reply": reply_text,
-                "send_result": send_result
-            }
-        )
+        replies.append({
+            "message_type": "text",
+            "sender_mobile": incoming.sender_mobile,
+            "reply": reply_text,
+            "send_result": send_result
+        })
 
     for incoming in location_messages:
         if container.inbound_message_repository.exists(
             incoming.provider_message_id
         ):
-            logger.info(
-                "WHATSAPP DUPLICATE LOCATION SKIPPED: id=%s",
-                incoming.provider_message_id
-            )
             continue
-
-        logger.info(
-            "WHATSAPP LOCATION: sender=%s id=%s latitude=%s longitude=%s",
-            incoming.sender_mobile,
-            incoming.provider_message_id,
-            incoming.latitude,
-            incoming.longitude
-        )
-
-        location_log = (
-            "LOCATION:"
-            f"{incoming.latitude:.7f},"
-            f"{incoming.longitude:.7f}"
-        )
 
         container.inbound_message_repository.save(
             provider_message_id=incoming.provider_message_id,
             sender_mobile=incoming.sender_mobile,
-            message_text=location_log
+            message_text=(
+                f"LOCATION:{incoming.latitude:.7f},"
+                f"{incoming.longitude:.7f}"
+            )
         )
 
         container.user_repository.save_location(
@@ -183,35 +134,50 @@ async def receive_webhook(request: Request) -> dict:
             location_address=incoming.address
         )
 
-        reply_text = (
-            "✅ మీ location విజయవంతంగా save అయింది.\n"
-            f"📍 Latitude: {incoming.latitude:.6f}\n"
-            f"📍 Longitude: {incoming.longitude:.6f}\n\n"
-            "ఇకపై nearby jobs మరియు workers matching కోసం "
-            "ఈ location ఉపయోగిస్తాం."
+        session = container.session_registry.get(
+            incoming.sender_mobile
         )
+
+        if session.step == ConversationStep.WORKER_LOCATION:
+            container.user_repository.complete_worker_registration(
+                incoming.sender_mobile
+            )
+            session.step = ConversationStep.MAIN_MENU
+            reply_text = (
+                "🎉 Worker Registration పూర్తైంది!\n\n"
+                f"పని: {session.data.get('category')}\n"
+                f"Experience: {session.data.get('experience')}\n"
+                f"Availability: {session.data.get('availability')}\n"
+                "📍 Location కూడా save అయింది.\n\n"
+                "ఇప్పటి నుండి మీకు దగ్గరలో వచ్చే Jobs "
+                "WhatsAppలో పంపబడతాయి."
+            )
+        else:
+            reply_text = (
+                "✅ మీ location విజయవంతంగా save అయింది.\n"
+                f"📍 Latitude: {incoming.latitude:.6f}\n"
+                f"📍 Longitude: {incoming.longitude:.6f}\n\n"
+                "Nearby jobs మరియు workers matching కోసం "
+                "ఈ location ఉపయోగిస్తాం."
+            )
 
         send_result = container.whatsapp_service.send_text_message(
             recipient_mobile=incoming.sender_mobile,
             message=reply_text
         )
-
         logger.info(
             "WHATSAPP LOCATION SEND RESULT: sender=%s result=%s",
             incoming.sender_mobile,
             send_result
         )
-
-        replies.append(
-            {
-                "message_type": "location",
-                "sender_mobile": incoming.sender_mobile,
-                "latitude": incoming.latitude,
-                "longitude": incoming.longitude,
-                "reply": reply_text,
-                "send_result": send_result
-            }
-        )
+        replies.append({
+            "message_type": "location",
+            "sender_mobile": incoming.sender_mobile,
+            "latitude": incoming.latitude,
+            "longitude": incoming.longitude,
+            "reply": reply_text,
+            "send_result": send_result
+        })
 
     return {
         "status": "processed",
