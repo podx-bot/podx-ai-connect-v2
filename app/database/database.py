@@ -88,6 +88,11 @@ class Database:
                 location_name TEXT,
                 location_address TEXT,
                 location_updated_at TEXT,
+                role TEXT,
+                job_category TEXT,
+                experience TEXT,
+                availability TEXT,
+                worker_registration_complete INTEGER NOT NULL DEFAULT 0,
                 registration_complete INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -95,31 +100,25 @@ class Database:
             """
         )
 
-        self._add_column_if_missing(
-            "users",
-            "latitude",
-            "REAL"
-        )
-        self._add_column_if_missing(
-            "users",
-            "longitude",
-            "REAL"
-        )
-        self._add_column_if_missing(
-            "users",
-            "location_name",
-            "TEXT"
-        )
-        self._add_column_if_missing(
-            "users",
-            "location_address",
-            "TEXT"
-        )
-        self._add_column_if_missing(
-            "users",
-            "location_updated_at",
-            "TEXT"
-        )
+        migrations = {
+            "latitude": "REAL",
+            "longitude": "REAL",
+            "location_name": "TEXT",
+            "location_address": "TEXT",
+            "location_updated_at": "TEXT",
+            "role": "TEXT",
+            "job_category": "TEXT",
+            "experience": "TEXT",
+            "availability": "TEXT",
+            "worker_registration_complete": "INTEGER NOT NULL DEFAULT 0"
+        }
+
+        for column_name, definition in migrations.items():
+            self._add_column_if_missing(
+                "users",
+                column_name,
+                definition
+            )
 
         self.execute(
             """
