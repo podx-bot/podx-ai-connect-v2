@@ -59,6 +59,56 @@ class UserRepository:
             )
         )
 
+    def save_worker_profile(
+        self,
+        whatsapp_mobile: str,
+        category: str,
+        experience: str,
+        availability: str
+    ) -> None:
+        self.database.execute(
+            """
+            INSERT INTO users (
+                whatsapp_mobile,
+                role,
+                job_category,
+                experience,
+                availability,
+                worker_registration_complete,
+                updated_at
+            )
+            VALUES (?, 'WORKER', ?, ?, ?, 0, CURRENT_TIMESTAMP)
+            ON CONFLICT(whatsapp_mobile)
+            DO UPDATE SET
+                role = 'WORKER',
+                job_category = excluded.job_category,
+                experience = excluded.experience,
+                availability = excluded.availability,
+                worker_registration_complete = 0,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                whatsapp_mobile,
+                category,
+                experience,
+                availability
+            )
+        )
+
+    def complete_worker_registration(
+        self,
+        whatsapp_mobile: str
+    ) -> None:
+        self.database.execute(
+            """
+            UPDATE users
+            SET worker_registration_complete = 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE whatsapp_mobile = ?
+            """,
+            (whatsapp_mobile,)
+        )
+
     def save_location(
         self,
         whatsapp_mobile: str,
