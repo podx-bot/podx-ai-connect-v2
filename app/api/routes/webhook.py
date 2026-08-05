@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -10,6 +11,7 @@ from app.whatsapp.payload_parser import (
 )
 
 router = APIRouter(tags=["WhatsApp"])
+logger = logging.getLogger("podx.whatsapp.webhook")
 
 
 @router.get(
@@ -39,8 +41,10 @@ def verify_webhook(
         == container.settings.whatsapp_webhook_verify_token
         and hub_challenge is not None
     ):
+        logger.info("WHATSAPP WEBHOOK VERIFIED")
         return hub_challenge
 
+    logger.warning("WHATSAPP WEBHOOK VERIFICATION FAILED")
     raise HTTPException(
         status_code=403,
         detail="Webhook verification failed."
@@ -50,11 +54,32 @@ def verify_webhook(
 @router.post("/webhook")
 async def receive_webhook(request: Request) -> dict:
     container = request.app.state.container
-    payload = await request.json()
+
+    try:
+        payload = await request.json()
+    except Exception:
+        logger.exception("WHATSAPP PAYLOAD JSON ERROR")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid webhook JSON payload."
+        )
 
     statuses = extract_delivery_statuses(payload)
     text_messages = extract_text_messages(payload)
     location_messages = extract_location_messages(payload)
+
+    logger.info(
+        "WHATSAPP INCOMING: text=%s location=%s status=%s",
+        len(text_messages),
+        len(location_messages),
+        len(statuses)
+    )
+
+    if not statuses and not text_messages and not location_messages:
+        logger.info(
+            "WHATSAPP INCOMING: ignored payload object=%s",
+            payload.get("object")
+        )
 
     for status in statuses:
         container.delivery_log_repository.save_status(
@@ -63,6 +88,12 @@ async def receive_webhook(request: Request) -> dict:
             status=status.status,
             error_message=status.error_message
         )
+        logger.info(
+            "WHATSAPP DELIVERY STATUS: id=%s status=%s recipient=%s",
+            status.provider_message_id,
+            status.status,
+            status.recipient_mobile
+        )
 
     replies = []
 
@@ -70,7 +101,18 @@ async def receive_webhook(request: Request) -> dict:
         if container.inbound_message_repository.exists(
             incoming.provider_message_id
         ):
+            logger.info(
+                "WHATSAPP DUPLICATE TEXT SKIPPED: id=%s",
+                incoming.provider_message_id
+            )
             continue
+
+        logger.info(
+            "WHATSAPP TEXT: sender=%s id=%s text=%s",
+            incoming.sender_mobile,
+            incoming.provider_message_id,
+            incoming.message_text
+        )
 
         container.inbound_message_repository.save(
             provider_message_id=incoming.provider_message_id,
@@ -88,6 +130,12 @@ async def receive_webhook(request: Request) -> dict:
             message=reply_text
         )
 
+        logger.info(
+            "WHATSAPP SEND RESULT: sender=%s result=%s",
+            incoming.sender_mobile,
+            send_result
+        )
+
         replies.append(
             {
                 "message_type": "text",
@@ -101,7 +149,19 @@ async def receive_webhook(request: Request) -> dict:
         if container.inbound_message_repository.exists(
             incoming.provider_message_id
         ):
+            logger.info(
+                "WHATSAPP DUPLICATE LOCATION SKIPPED: id=%s",
+                incoming.provider_message_id
+            )
             continue
+
+        logger.info(
+            "WHATSAPP LOCATION: sender=%s id=%s latitude=%s longitude=%s",
+            incoming.sender_mobile,
+            incoming.provider_message_id,
+            incoming.latitude,
+            incoming.longitude
+        )
 
         location_log = (
             "LOCATION:"
@@ -134,6 +194,12 @@ async def receive_webhook(request: Request) -> dict:
         send_result = container.whatsapp_service.send_text_message(
             recipient_mobile=incoming.sender_mobile,
             message=reply_text
+        )
+
+        logger.info(
+            "WHATSAPP LOCATION SEND RESULT: sender=%s result=%s",
+            incoming.sender_mobile,
+            send_result
         )
 
         replies.append(
