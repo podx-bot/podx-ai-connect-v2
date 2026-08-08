@@ -145,6 +145,18 @@ class Database:
             """
         )
 
+        self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS conversation_sessions (
+                sender_mobile TEXT PRIMARY KEY,
+                step TEXT NOT NULL DEFAULT 'START',
+                data_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
     def health_check(self) -> bool:
         row = self.fetchone("SELECT 1 AS ok")
         return bool(row and row["ok"] == 1)

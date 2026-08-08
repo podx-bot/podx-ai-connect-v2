@@ -6,6 +6,7 @@ from app.repositories.delivery_log_repository import (
 from app.repositories.inbound_message_repository import (
     InboundMessageRepository
 )
+from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.conversation_service import ConversationService
 from app.services.session_registry import SessionRegistry
@@ -25,8 +26,11 @@ class AppContainer:
         self.delivery_log_repository = (
             DeliveryLogRepository(self.database)
         )
+        self.session_repository = SessionRepository(self.database)
 
-        self.session_registry = SessionRegistry()
+        self.session_registry = SessionRegistry(
+            repository=self.session_repository
+        )
         self.conversation_service = ConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry
