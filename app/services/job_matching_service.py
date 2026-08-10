@@ -17,9 +17,7 @@ class JobMatchingService:
         self.max_distance_km = float(max_distance_km)
 
     def match_and_notify(self, job: dict[str, Any]) -> dict[str, Any]:
-        candidates = self.user_repository.find_candidate_workers(
-            str(job["service"])
-        )
+        candidates = self.user_repository.find_candidate_workers(str(job["service"]))
         matched = []
         notified = []
         skipped_self = 0
@@ -46,10 +44,7 @@ class JobMatchingService:
                 "experience": worker.get("experience")
             })
 
-            if self.user_repository.has_match_notification(
-                int(job["id"]),
-                worker_mobile
-            ):
+            if self.user_repository.has_match_notification(int(job["id"]), worker_mobile):
                 continue
 
             message = self._worker_message(job, worker, distance_km)
@@ -90,16 +85,16 @@ class JobMatchingService:
         job_id = int(job["id"])
         required_workers = max(1, int(job.get("required_workers") or 1))
         return (
-            "🔔 మీకు దగ్గరలో కొత్త Job వచ్చింది!\n\n"
-            f"Job ID: #{job_id}\n"
+            "🔔 మీ దగ్గర పని వచ్చింది!\n\n"
             f"పని: {job['service']}\n"
-            f"Requirement: {job['requirement']}\n"
-            f"Workers required: {required_workers}\n"
-            f"దూరం: సుమారు {distance_km:.1f} km\n"
-            f"మీ Availability: {worker.get('availability') or '-'}\n\n"
-            f"✅ Accept చేయడానికి: ACCEPT {job_id}\n"
-            f"❌ వద్దంటే: REJECT {job_id}\n\n"
-            "Accept చేసిన తర్వాత employer confirmation వస్తుంది."
+            f"వివరాలు: {job['requirement']}\n"
+            f"కావాల్సిన వాళ్లు: {required_workers}\n"
+            f"దూరం: సుమారు {distance_km:.1f} km\n\n"
+            "ఈ పని చేయడానికి ఇష్టమేనా?\n\n"
+            "1. అవును ✅\n"
+            "2. వద్దు ❌\n\n"
+            "1 లేదా 2 పంపండి."
+            f"\n(లేదా ACCEPT {job_id} / REJECT {job_id})"
         )
 
     @staticmethod
@@ -114,7 +109,6 @@ class JobMatchingService:
         lat2 = radians(latitude_b)
         delta_lat = radians(latitude_b - latitude_a)
         delta_lon = radians(longitude_b - longitude_a)
-
         haversine = (
             sin(delta_lat / 2) ** 2
             + cos(lat1) * cos(lat2) * sin(delta_lon / 2) ** 2
