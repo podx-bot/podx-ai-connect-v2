@@ -9,6 +9,7 @@ from app.repositories.inbound_message_repository import (
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.conversation_service import ConversationService
+from app.services.job_matching_service import JobMatchingService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
 
@@ -42,6 +43,10 @@ class AppContainer:
                 self.settings.whatsapp_phone_number_id
             ),
             api_version=self.settings.whatsapp_api_version
+        )
+        self.job_matching_service = JobMatchingService(
+            user_repository=self.user_repository,
+            whatsapp_service=self.whatsapp_service
         )
 
     def close(self) -> None:
