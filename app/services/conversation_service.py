@@ -47,6 +47,12 @@ class ConversationService:
             self.session_registry.reset(sender_mobile)
             return "Conversation reset అయింది. మళ్లీ Hi పంపండి."
 
+        if normalized in {"hi", "hello", "hey", "హాయ్", "హలో"}:
+            if existing_user and existing_user.get("registration_complete") == 1:
+                session.step = ConversationStep.MAIN_MENU
+                session.data.clear()
+                return self._reply(sender_mobile, self._main_menu())
+
         if normalized in {"help", "సహాయం"}:
             return self._reply(sender_mobile, "PODX సహాయం:\nMenu - ప్రధాన మెనూ\nBack - ఒక దశ వెనక్కి\nRestart - మళ్లీ మొదలు\n\n" + self._main_menu())
 
@@ -109,7 +115,6 @@ class ConversationService:
                 session.step = ConversationStep.WORKER_CATEGORY
                 return self._reply(sender_mobile, self._category_menu())
             if normalized in {"2", "వర్కర్స్ కావాలి", "workers కావాలి", "employer"}:
-                # Enter Employer workflow
                 session.data.clear()
                 session.data["role"] = "EMPLOYER"
                 session.step = ConversationStep.EMPLOYER_SERVICE
@@ -124,7 +129,6 @@ class ConversationService:
             return self._reply(sender_mobile, "దయచేసి Menuలో ఉన్న option ఎంచుకోండి.\n\n" + self._main_menu())
 
         if session.step == ConversationStep.EMPLOYER_SERVICE:
-            # Employer chooses which service they need
             service = self.CATEGORY_MAP.get(normalized)
             if service is None:
                 return self._reply(sender_mobile, "దయచేసి సరైన సేవ ఎంచుకోండి.\n\n" + self._employer_service_menu())
@@ -137,11 +141,9 @@ class ConversationService:
                 return self._reply(sender_mobile, "దయచేసి job గురించి సరైన వివరాలు పంపండి (చిన్న వాక్యంగా కాదు).")
             requirement = clean_message
             session.data["requirement"] = requirement
-            # Persist employer post summary (service + requirement)
             try:
                 self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=session.data.get("service"), requirement=requirement)
             except Exception:
-                # Non-fatal; still continue workflow
                 pass
             session.step = ConversationStep.EMPLOYER_LOCATION
             return self._reply(sender_mobile, "📍 చివరి స్టెప్: WhatsApp Attachment ద్వారా మీ Job Location share చేయండి.")
@@ -237,7 +239,6 @@ class ConversationService:
 
     @staticmethod
     def _employer_service_menu() -> str:
-        # Employer service menu can mirror the worker categories for now
         return "👷 మీరు ఏ సేవ కోసం వర్కర్స్ కోరుకుంటున్నారు?\n\n1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
 
     @staticmethod
