@@ -122,6 +122,45 @@ class Database:
 
         self.execute(
             """
+            CREATE TABLE IF NOT EXISTS employer_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employer_mobile TEXT NOT NULL,
+                service TEXT NOT NULL,
+                requirement TEXT NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                location_name TEXT,
+                location_address TEXT,
+                status TEXT NOT NULL DEFAULT 'DRAFT',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_employer_jobs_mobile_status
+            ON employer_jobs(employer_mobile, status)
+            """
+        )
+
+        self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employer_job_id INTEGER NOT NULL,
+                worker_mobile TEXT NOT NULL,
+                distance_km REAL NOT NULL,
+                provider_message_id TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employer_job_id, worker_mobile)
+            )
+            """
+        )
+
+        self.execute(
+            """
             CREATE TABLE IF NOT EXISTS inbound_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider_message_id TEXT UNIQUE NOT NULL,
