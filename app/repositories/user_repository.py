@@ -114,32 +114,138 @@ class UserRepository:
         whatsapp_mobile: str,
         service: str,
         requirement: str
-    ) -> None:
-        """
-        Save a minimal employer post by setting role and job_category and storing the requirement in the experience column
-        (experience is reused here to avoid schema changes). This is intentionally conservative to avoid altering schema.
-        """
+    ) -> int:
         self.database.execute(
             """
-            INSERT INTO users (
-                whatsapp_mobile,
-                role,
-                job_category,
-                experience,
+            UPDATE employer_jobs
+            SET status = 'CANCELLED',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE employer_mobile = ?
+              AND status = 'DRAFT'
+            """,
+            (whatsapp_mobile,)
+        )
+        cursor = self.database.execute(
+            """
+            INSERT INTO employer_jobs (
+                employer_mobile,
+                service,
+                requirement,
+                status,
                 updated_at
             )
-            VALUES (?, 'EMPLOYER', ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(whatsapp_mobile)
-            DO UPDATE SET
-                role = 'EMPLOYER',
-                job_category = excluded.job_category,
-                experience = excluded.experience,
+            VALUES (?, ?, ?, 'DRAFT', CURRENT_TIMESTAMP)
+            """,
+            (whatsapp_mobile, service, requirement)
+        )
+        return int(cursor.lastrowid)
+
+    def save_employer_job_location(
+        self,
+        whatsapp_mobile: str,
+        latitude: float,
+        longitude: float,
+        location_name: Optional[str] = None,
+        location_address: Optional[str] = None
+    ) -> Optional[dict]:
+        row = self.database.fetchone(
+            """
+            SELECT *
+            FROM employer_jobs
+            WHERE employer_mobile = ?
+              AND status = 'DRAFT'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (whatsapp_mobile,)
+        )
+        if not row:
+            return None
+
+        job_id = int(row["id"])
+        self.database.execute(
+            """
+            UPDATE employer_jobs
+            SET latitude = ?,
+                longitude = ?,
+                location_name = ?,
+                location_address = ?,
+                status = 'OPEN',
                 updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
             """,
             (
-                whatsapp_mobile,
-                service,
-                requirement
+                latitude,
+                longitude,
+                location_name,
+                location_address,
+                job_id
+            )
+        )
+        return self.find_employer_job(job_id)
+
+    def find_employer_job(self, job_id: int) -> Optional[dict]:
+        row = self.database.fetchone(
+            "SELECT * FROM employer_jobs WHERE id = ?",
+            (job_id,)
+        )
+        return dict(row) if row else None
+
+    def find_candidate_workers(self, category: str) -> list[dict]:
+        rows = self.database.fetchall(
+            """
+            SELECT *
+            FROM users
+            WHERE worker_registration_complete = 1
+              AND job_category = ?
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+              AND availability IS NOT NULL
+            ORDER BY updated_at DESC
+            """,
+            (category,)
+        )
+        return [dict(row) for row in rows]
+
+    def has_match_notification(
+        self,
+        employer_job_id: int,
+        worker_mobile: str
+    ) -> bool:
+        row = self.database.fetchone(
+            """
+            SELECT 1
+            FROM match_notifications
+            WHERE employer_job_id = ?
+              AND worker_mobile = ?
+            LIMIT 1
+            """,
+            (employer_job_id, worker_mobile)
+        )
+        return row is not None
+
+    def record_match_notification(
+        self,
+        employer_job_id: int,
+        worker_mobile: str,
+        distance_km: float,
+        provider_message_id: Optional[str]
+    ) -> None:
+        self.database.execute(
+            """
+            INSERT OR IGNORE INTO match_notifications (
+                employer_job_id,
+                worker_mobile,
+                distance_km,
+                provider_message_id
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                employer_job_id,
+                worker_mobile,
+                distance_km,
+                provider_message_id
             )
         )
 
