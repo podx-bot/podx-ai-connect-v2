@@ -191,33 +191,92 @@ async def receive_webhook(request: Request) -> dict:
                 )
             )
 
-            container.user_repository.save_location(
-                whatsapp_mobile=incoming.sender_mobile,
-                latitude=incoming.latitude,
-                longitude=incoming.longitude,
-                location_name=incoming.name,
-                location_address=incoming.address
-            )
-
             session = container.session_registry.get(
                 incoming.sender_mobile
             )
 
             if session.step == ConversationStep.WORKER_LOCATION:
+                worker_category = session.data.get("category")
+                worker_experience = session.data.get("experience")
+                worker_availability = session.data.get("availability")
+
+                container.user_repository.save_location(
+                    whatsapp_mobile=incoming.sender_mobile,
+                    latitude=incoming.latitude,
+                    longitude=incoming.longitude,
+                    location_name=incoming.name,
+                    location_address=incoming.address
+                )
                 container.user_repository.complete_worker_registration(
                     incoming.sender_mobile
                 )
                 session.step = ConversationStep.MAIN_MENU
+                session.data.clear()
+                container.session_registry.save(incoming.sender_mobile)
+
                 reply_text = (
                     "🎉 Worker Registration పూర్తైంది!\n\n"
-                    f"పని: {session.data.get('category')}\n"
-                    f"Experience: {session.data.get('experience')}\n"
-                    f"Availability: {session.data.get('availability')}\n"
+                    f"పని: {worker_category}\n"
+                    f"Experience: {worker_experience}\n"
+                    f"Availability: {worker_availability}\n"
                     "📍 Location కూడా save అయింది.\n\n"
                     "ఇప్పటి నుండి మీకు దగ్గరలో వచ్చే Jobs "
                     "WhatsAppలో పంపబడతాయి."
                 )
+
+            elif session.step == ConversationStep.EMPLOYER_LOCATION:
+                job = container.user_repository.save_employer_job_location(
+                    whatsapp_mobile=incoming.sender_mobile,
+                    latitude=incoming.latitude,
+                    longitude=incoming.longitude,
+                    location_name=incoming.name,
+                    location_address=incoming.address
+                )
+
+                session.step = ConversationStep.MAIN_MENU
+                session.data.clear()
+                container.session_registry.save(incoming.sender_mobile)
+
+                if job is None:
+                    visible_log(
+                        "JOB MATCHING SKIPPED: "
+                        f"sender={incoming.sender_mobile} reason=no_draft_job"
+                    )
+                    reply_text = (
+                        "⚠️ Job details దొరకలేదు. Hi పంపి Employer "
+                        "workflowను మళ్లీ ప్రారంభించండి."
+                    )
+                else:
+                    match_result = (
+                        container.job_matching_service.match_and_notify(job)
+                    )
+                    visible_log(
+                        "JOB MATCHING RESULT: "
+                        f"job_id={job['id']} "
+                        f"service={job['service']} "
+                        f"candidates={match_result['candidate_count']} "
+                        f"matched={match_result['matched_count']} "
+                        f"notified={match_result['notified_count']} "
+                        f"skipped_self={match_result['skipped_self_count']}"
+                    )
+                    reply_text = (
+                        "✅ మీ Job Location save అయింది.\n\n"
+                        f"పని: {job['service']}\n"
+                        f"Requirement: {job['requirement']}\n"
+                        f"📍 Nearby matches: {match_result['matched_count']}\n"
+                        f"🔔 Notifications sent: {match_result['notified_count']}\n\n"
+                        "కొత్త matching workers దొరికితే PODX ద్వారా "
+                        "notification process కొనసాగుతుంది."
+                    )
+
             else:
+                container.user_repository.save_location(
+                    whatsapp_mobile=incoming.sender_mobile,
+                    latitude=incoming.latitude,
+                    longitude=incoming.longitude,
+                    location_name=incoming.name,
+                    location_address=incoming.address
+                )
                 reply_text = (
                     "✅ మీ location విజయవంతంగా save అయింది.\n"
                     f"📍 Latitude: {incoming.latitude:.6f}\n"
