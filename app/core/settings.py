@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -15,12 +16,28 @@ class Settings:
     whatsapp_webhook_verify_token: str
 
 
+def _database_path() -> str:
+    """Resolve a database path that persists on Railway when a Volume is attached.
+
+    PODX_DATABASE_PATH continues to work as before. When Railway exposes a
+    RAILWAY_VOLUME_MOUNT_PATH and PODX_DATABASE_PATH is missing or relative,
+    place the SQLite file on the mounted Volume so deploys/restarts do not wipe
+    registrations and conversation sessions.
+    """
+    configured = os.getenv("PODX_DATABASE_PATH", "").strip()
+    volume_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+
+    if volume_mount:
+        configured_path = Path(configured) if configured else Path("podx_v2.db")
+        if not configured_path.is_absolute():
+            return str(Path(volume_mount) / configured_path.name)
+
+    return configured or "podx_v2.db"
+
+
 def load_settings() -> Settings:
     return Settings(
-        database_path=os.getenv(
-            "PODX_DATABASE_PATH",
-            "podx_v2.db"
-        ).strip(),
+        database_path=_database_path(),
         whatsapp_access_token=os.getenv(
             "WHATSAPP_ACCESS_TOKEN",
             ""
