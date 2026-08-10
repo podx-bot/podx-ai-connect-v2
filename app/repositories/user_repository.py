@@ -109,6 +109,40 @@ class UserRepository:
             (whatsapp_mobile,)
         )
 
+    def save_employer_post(
+        self,
+        whatsapp_mobile: str,
+        service: str,
+        requirement: str
+    ) -> None:
+        """
+        Save a minimal employer post by setting role and job_category and storing the requirement in the experience column
+        (experience is reused here to avoid schema changes). This is intentionally conservative to avoid altering schema.
+        """
+        self.database.execute(
+            """
+            INSERT INTO users (
+                whatsapp_mobile,
+                role,
+                job_category,
+                experience,
+                updated_at
+            )
+            VALUES (?, 'EMPLOYER', ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(whatsapp_mobile)
+            DO UPDATE SET
+                role = 'EMPLOYER',
+                job_category = excluded.job_category,
+                experience = excluded.experience,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                whatsapp_mobile,
+                service,
+                requirement
+            )
+        )
+
     def save_location(
         self,
         whatsapp_mobile: str,
