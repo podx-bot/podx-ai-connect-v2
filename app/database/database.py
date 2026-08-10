@@ -67,7 +67,6 @@ class Database:
     ) -> None:
         if self._column_exists(table_name, column_name):
             return
-
         self.execute(
             f"ALTER TABLE {table_name} "
             f"ADD COLUMN {column_name} {column_definition}"
@@ -112,13 +111,8 @@ class Database:
             "availability": "TEXT",
             "worker_registration_complete": "INTEGER NOT NULL DEFAULT 0"
         }
-
         for column_name, definition in migrations.items():
-            self._add_column_if_missing(
-                "users",
-                column_name,
-                definition
-            )
+            self._add_column_if_missing("users", column_name, definition)
 
         self.execute(
             """
@@ -132,10 +126,18 @@ class Database:
                 location_name TEXT,
                 location_address TEXT,
                 status TEXT NOT NULL DEFAULT 'DRAFT',
+                required_workers INTEGER NOT NULL DEFAULT 1,
+                employer_contact TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+        self._add_column_if_missing(
+            "employer_jobs", "required_workers", "INTEGER NOT NULL DEFAULT 1"
+        )
+        self._add_column_if_missing(
+            "employer_jobs", "employer_contact", "TEXT"
         )
 
         self.execute(
@@ -155,6 +157,54 @@ class Database:
                 provider_message_id TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(employer_job_id, worker_mobile)
+            )
+            """
+        )
+
+        self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS job_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employer_job_id INTEGER NOT NULL,
+                worker_mobile TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING_CONFIRMATION',
+                worker_contact TEXT,
+                last_latitude REAL,
+                last_longitude REAL,
+                last_location_at TEXT,
+                accepted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                confirmed_at TEXT,
+                arrived_at TEXT,
+                work_started_at TEXT,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employer_job_id, worker_mobile)
+            )
+            """
+        )
+        self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_assignments_job_status
+            ON job_assignments(employer_job_id, status)
+            """
+        )
+        self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_job_assignments_worker_status
+            ON job_assignments(worker_mobile, status)
+            """
+        )
+
+        self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worker_tracking_updates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employer_job_id INTEGER NOT NULL,
+                worker_mobile TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                worker_status TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )

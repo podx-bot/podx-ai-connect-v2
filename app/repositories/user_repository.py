@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 from app.database.database import Database
@@ -125,18 +126,31 @@ class UserRepository:
             """,
             (whatsapp_mobile,)
         )
+
+        employer = self.find_by_whatsapp_mobile(whatsapp_mobile) or {}
+        employer_contact = employer.get("entered_mobile") or whatsapp_mobile
+        required_workers = self._required_worker_count(requirement)
+
         cursor = self.database.execute(
             """
             INSERT INTO employer_jobs (
                 employer_mobile,
                 service,
                 requirement,
+                required_workers,
+                employer_contact,
                 status,
                 updated_at
             )
-            VALUES (?, ?, ?, 'DRAFT', CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, 'DRAFT', CURRENT_TIMESTAMP)
             """,
-            (whatsapp_mobile, service, requirement)
+            (
+                whatsapp_mobile,
+                service,
+                requirement,
+                required_workers,
+                employer_contact
+            )
         )
         return int(cursor.lastrowid)
 
@@ -286,3 +300,12 @@ class UserRepository:
                 location_address
             )
         )
+
+    @staticmethod
+    def _required_worker_count(requirement: str) -> int:
+        matches = re.findall(r"\b(\d{1,3})\b", str(requirement))
+        for value in matches:
+            count = int(value)
+            if 1 <= count <= 500:
+                return count
+        return 1

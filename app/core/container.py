@@ -6,9 +6,11 @@ from app.repositories.delivery_log_repository import (
 from app.repositories.inbound_message_repository import (
     InboundMessageRepository
 )
+from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.conversation_service import ConversationService
+from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
@@ -28,6 +30,7 @@ class AppContainer:
             DeliveryLogRepository(self.database)
         )
         self.session_repository = SessionRepository(self.database)
+        self.job_lifecycle_repository = JobLifecycleRepository(self.database)
 
         self.session_registry = SessionRegistry(
             repository=self.session_repository
@@ -46,6 +49,10 @@ class AppContainer:
         )
         self.job_matching_service = JobMatchingService(
             user_repository=self.user_repository,
+            whatsapp_service=self.whatsapp_service
+        )
+        self.job_lifecycle_service = JobLifecycleService(
+            repository=self.job_lifecycle_repository,
             whatsapp_service=self.whatsapp_service
         )
 
