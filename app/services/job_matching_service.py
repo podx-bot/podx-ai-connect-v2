@@ -87,13 +87,19 @@ class JobMatchingService:
         worker: dict[str, Any],
         distance_km: float
     ) -> str:
+        job_id = int(job["id"])
+        required_workers = max(1, int(job.get("required_workers") or 1))
         return (
             "🔔 మీకు దగ్గరలో కొత్త Job వచ్చింది!\n\n"
+            f"Job ID: #{job_id}\n"
             f"పని: {job['service']}\n"
             f"Requirement: {job['requirement']}\n"
+            f"Workers required: {required_workers}\n"
             f"దూరం: సుమారు {distance_km:.1f} km\n"
             f"మీ Availability: {worker.get('availability') or '-'}\n\n"
-            "ఆసక్తి ఉంటే PODXలో Hi పంపి కొనసాగండి."
+            f"✅ Accept చేయడానికి: ACCEPT {job_id}\n"
+            f"❌ వద్దంటే: REJECT {job_id}\n\n"
+            "Accept చేసిన తర్వాత employer confirmation వస్తుంది."
         )
 
     @staticmethod
