@@ -109,7 +109,11 @@ class ConversationService:
                 session.step = ConversationStep.WORKER_CATEGORY
                 return self._reply(sender_mobile, self._category_menu())
             if normalized in {"2", "వర్కర్స్ కావాలి", "workers కావాలి", "employer"}:
-                return self._reply(sender_mobile, "👷 Employer workflow త్వరలో ప్రారంభమవుతుంది.\n\n" + self._main_menu())
+                # Enter Employer workflow
+                session.data.clear()
+                session.data["role"] = "EMPLOYER"
+                session.step = ConversationStep.EMPLOYER_SERVICE
+                return self._reply(sender_mobile, "👷 Employer workflow ప్రారంభమవుతుంది.\n\n" + self._employer_service_menu())
             if normalized in {"3", "నా ప్రొఫైల్"}:
                 user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
                 if not user:
@@ -118,6 +122,32 @@ class ConversationService:
             if normalized in {"4", "సహాయం"}:
                 return self._reply(sender_mobile, "PODX ఉద్యోగాలు మరియు వర్కర్స్‌ను కనెక్ట్ చేస్తుంది.\n\n" + self._main_menu())
             return self._reply(sender_mobile, "దయచేసి Menuలో ఉన్న option ఎంచుకోండి.\n\n" + self._main_menu())
+
+        if session.step == ConversationStep.EMPLOYER_SERVICE:
+            # Employer chooses which service they need
+            service = self.CATEGORY_MAP.get(normalized)
+            if service is None:
+                return self._reply(sender_mobile, "దయచేసి సరైన సేవ ఎంచుకోండి.\n\n" + self._employer_service_menu())
+            session.data["service"] = service
+            session.step = ConversationStep.EMPLOYER_REQUIREMENT
+            return self._reply(sender_mobile, f"✅ {service} ఎంపిక చేశారు.\n\nదయచేసి మీ job requirement వివరాలు పంపండి.")
+
+        if session.step == ConversationStep.EMPLOYER_REQUIREMENT:
+            if len(clean_message) < 5:
+                return self._reply(sender_mobile, "దయచేసి job గురించి సరైన వివరాలు పంపండి (చిన్న వాక్యంగా కాదు).")
+            requirement = clean_message
+            session.data["requirement"] = requirement
+            # Persist employer post summary (service + requirement)
+            try:
+                self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=session.data.get("service"), requirement=requirement)
+            except Exception:
+                # Non-fatal; still continue workflow
+                pass
+            session.step = ConversationStep.EMPLOYER_LOCATION
+            return self._reply(sender_mobile, "📍 చివరి స్టెప్: WhatsApp Attachment ద్వారా మీ Job Location share చేయండి.")
+
+        if session.step == ConversationStep.EMPLOYER_LOCATION:
+            return self._reply(sender_mobile, "📍 దయచేసి text కాకుండా WhatsApp Location share చేయండి.")
 
         if session.step == ConversationStep.WORKER_CATEGORY:
             category = self.CATEGORY_MAP.get(normalized)
@@ -159,6 +189,9 @@ class ConversationService:
             ConversationStep.WORKER_EXPERIENCE: ConversationStep.WORKER_CATEGORY,
             ConversationStep.WORKER_AVAILABILITY: ConversationStep.WORKER_EXPERIENCE,
             ConversationStep.WORKER_LOCATION: ConversationStep.WORKER_AVAILABILITY,
+            ConversationStep.EMPLOYER_SERVICE: ConversationStep.MAIN_MENU,
+            ConversationStep.EMPLOYER_REQUIREMENT: ConversationStep.EMPLOYER_SERVICE,
+            ConversationStep.EMPLOYER_LOCATION: ConversationStep.EMPLOYER_REQUIREMENT,
         }
         if session.step == ConversationStep.MAIN_MENU:
             return self._reply(sender_mobile, self._main_menu())
@@ -178,6 +211,9 @@ class ConversationService:
             ConversationStep.WORKER_CATEGORY: self._category_menu(),
             ConversationStep.WORKER_EXPERIENCE: "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years",
             ConversationStep.WORKER_AVAILABILITY: "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week",
+            ConversationStep.EMPLOYER_SERVICE: self._employer_service_menu(),
+            ConversationStep.EMPLOYER_REQUIREMENT: "దయచేసి మీ job requirement వివరాలు పంపండి.",
+            ConversationStep.EMPLOYER_LOCATION: "📍 చివరి స్టెప్: WhatsApp Attachment ద్వారా మీ Job Location share చేయండి.",
         }
         return self._reply(sender_mobile, prompts.get(target, "Previous stepకి వచ్చారు."))
 
@@ -198,6 +234,11 @@ class ConversationService:
     @staticmethod
     def _category_menu() -> str:
         return "💼 మీరు ఏ పని కోసం చూస్తున్నారు?\n\n1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
+
+    @staticmethod
+    def _employer_service_menu() -> str:
+        # Employer service menu can mirror the worker categories for now
+        return "👷 మీరు ఏ సేవ కోసం వర్కర్స్ కోరుకుంటున్నారు?\n\n1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
 
     @staticmethod
     def _main_menu() -> str:
