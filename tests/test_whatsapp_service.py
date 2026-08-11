@@ -9,7 +9,7 @@ def build_service(max_attempts=3):
         phone_number_id="123",
         api_version="v23.0",
         max_attempts=max_attempts,
-        retry_delay_seconds=0
+        retry_delay_seconds=0,
     )
 
 
@@ -26,7 +26,7 @@ def test_retries_temporary_failure_then_succeeds(monkeypatch):
     service = build_service()
     responses = [
         httpx.Response(503, json={"error": {"message": "busy"}}),
-        httpx.Response(200, json={"messages": [{"id": "wamid.ok"}]})
+        httpx.Response(200, json={"messages": [{"id": "wamid.ok"}]}),
     ]
 
     def fake_post(*args, **kwargs):
@@ -72,3 +72,27 @@ def test_stops_after_max_attempts_on_timeout(monkeypatch):
     assert result["status"] == "TIMEOUT"
     assert result["attempts"] == 3
     assert calls["count"] == 3
+
+
+def test_send_voice_bytes_uploads_then_sends_audio(monkeypatch):
+    service = build_service()
+    calls = []
+
+    def fake_post(url, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/media"):
+            return httpx.Response(200, json={"id": "media-voice-1"})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.voice.ok"}]})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    result = service.send_voice_bytes(
+        recipient_mobile="919999999999",
+        audio_bytes=b"fake-ogg-opus",
+    )
+
+    assert result["success"] is True
+    assert result["media_id"] == "media-voice-1"
+    assert result["provider_message_id"] == "wamid.voice.ok"
+    assert len(calls) == 2
+    assert calls[0][0].endswith("/media")
+    assert calls[1][1]["json"]["audio"]["voice"] is True
