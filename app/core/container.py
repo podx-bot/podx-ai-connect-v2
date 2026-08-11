@@ -6,6 +6,7 @@ from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.conversation_service import ConversationService
+from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.session_registry import SessionRegistry
@@ -48,6 +49,10 @@ class AppContainer:
         self.job_lifecycle_service = JobLifecycleService(
             repository=self.job_lifecycle_repository,
             whatsapp_service=self.whatsapp_service,
+        )
+        self.easy_job_command_service = EasyJobCommandService(
+            repository=self.job_lifecycle_repository,
+            lifecycle_service=self.job_lifecycle_service,
         )
 
     def close(self) -> None:
