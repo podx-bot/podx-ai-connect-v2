@@ -27,9 +27,7 @@ def _process_user_text(container, sender_mobile: str, message: str) -> str:
         message=message,
     )
     if easy_reply is not None:
-        visible_log(
-            f"EASY JOB COMMAND: sender={sender_mobile} text={message}"
-        )
+        visible_log(f"EASY JOB COMMAND: sender={sender_mobile} text={message}")
         return easy_reply
 
     lifecycle_reply = container.job_lifecycle_service.process_text(
@@ -37,15 +35,60 @@ def _process_user_text(container, sender_mobile: str, message: str) -> str:
         message=message,
     )
     if lifecycle_reply is not None:
-        visible_log(
-            f"JOB LIFECYCLE COMMAND: sender={sender_mobile} text={message}"
-        )
+        visible_log(f"JOB LIFECYCLE COMMAND: sender={sender_mobile} text={message}")
         return lifecycle_reply
 
     return container.conversation_service.process(
         sender_mobile=sender_mobile,
         message=message,
     )
+
+
+def _send_spoken_reply(container, sender_mobile: str, reply_text: str) -> dict:
+    if not container.settings.voice_reply_enabled:
+        return {"success": False, "status": "VOICE_REPLY_DISABLED"}
+
+    synthesis = container.voice_assistant_service.synthesize(reply_text)
+    if not synthesis.get("success"):
+        visible_log(
+            "PODX TTS FAILED: "
+            f"sender={sender_mobile} status={synthesis.get('status')} "
+            f"error={synthesis.get('error')}"
+        )
+        return {
+            "success": False,
+            "status": "TTS_FAILED",
+            "synthesis": synthesis,
+        }
+
+    conversion = container.audio_codec_service.pcm_to_ogg_opus(
+        pcm_bytes=synthesis["content"],
+        sample_rate=int(synthesis.get("sample_rate") or 24000),
+        channels=int(synthesis.get("channels") or 1),
+    )
+    if not conversion.get("success"):
+        visible_log(
+            "PODX VOICE CONVERSION FAILED: "
+            f"sender={sender_mobile} status={conversion.get('status')} "
+            f"error={conversion.get('error')}"
+        )
+        return {
+            "success": False,
+            "status": "VOICE_CONVERSION_FAILED",
+            "conversion": conversion,
+        }
+
+    send_result = container.whatsapp_service.send_voice_bytes(
+        recipient_mobile=sender_mobile,
+        audio_bytes=conversion["content"],
+        mime_type=conversion.get("mime_type") or "audio/ogg",
+        file_name=conversion.get("file_name") or "podx-reply.ogg",
+    )
+    visible_log(
+        "PODX VOICE SEND RESULT: "
+        f"sender={sender_mobile} result={send_result}"
+    )
+    return send_result
 
 
 @router.get("/webhook", response_class=PlainTextResponse)
@@ -228,8 +271,17 @@ async def receive_webhook(request: Request) -> dict:
                 message=reply_text,
             )
             visible_log(
-                f"WHATSAPP AUDIO REPLY RESULT: sender={incoming.sender_mobile} result={send_result}"
+                f"WHATSAPP AUDIO TEXT REPLY RESULT: sender={incoming.sender_mobile} result={send_result}"
             )
+
+            voice_send_result = None
+            if transcript is not None:
+                voice_send_result = _send_spoken_reply(
+                    container,
+                    incoming.sender_mobile,
+                    reply_text,
+                )
+
             replies.append(
                 {
                     "message_type": "audio",
@@ -237,6 +289,7 @@ async def receive_webhook(request: Request) -> dict:
                     "transcript": transcript,
                     "reply": reply_text,
                     "send_result": send_result,
+                    "voice_send_result": voice_send_result,
                 }
             )
         except Exception as error:
