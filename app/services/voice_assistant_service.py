@@ -1,24 +1,35 @@
 import base64
+import re
 from typing import Any, Optional
 
 import httpx
+from google import genai
 
 
 class VoiceAssistantService:
-    """Convert short WhatsApp voice notes to text for the existing PODX flows."""
+    """Understand WhatsApp voice notes and synthesize PODX spoken replies."""
 
     def __init__(
         self,
         api_key: str,
         model: str = "gemini-2.5-flash",
         max_audio_bytes: int = 18 * 1024 * 1024,
+        tts_model: str = "gemini-3.1-flash-tts-preview",
+        tts_voice: str = "Sulafat",
+        voice_reply_max_chars: int = 900,
     ) -> None:
         self.api_key = str(api_key).strip()
         self.model = str(model).strip() or "gemini-2.5-flash"
         self.max_audio_bytes = max(1, int(max_audio_bytes))
+        self.tts_model = str(tts_model).strip() or "gemini-3.1-flash-tts-preview"
+        self.tts_voice = str(tts_voice).strip() or "Sulafat"
+        self.voice_reply_max_chars = max(100, int(voice_reply_max_chars))
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.model)
+
+    def is_tts_configured(self) -> bool:
+        return bool(self.api_key and self.tts_model and self.tts_voice)
 
     def transcribe(self, audio_bytes: bytes, mime_type: Optional[str]) -> dict[str, Any]:
         if not self.is_configured():
@@ -108,6 +119,86 @@ class VoiceAssistantService:
                 "error": str(error),
             }
 
+    def synthesize(self, text: str) -> dict[str, Any]:
+        """Generate 24 kHz mono signed-16-bit PCM for a short PODX reply."""
+        if not self.is_tts_configured():
+            return {"success": False, "status": "TTS_NOT_CONFIGURED"}
+
+        spoken_text = self.prepare_spoken_text(text)
+        if not spoken_text:
+            return {"success": False, "status": "EMPTY_TTS_TEXT"}
+
+        prompt = (
+            "Speak the following PODX WhatsApp reply naturally and clearly. "
+            "Use the language already present in the reply. "
+            "For Telugu, use a warm, friendly Telugu speaking style. "
+            "Keep a moderate pace suitable for a user who may prefer listening "
+            "instead of reading. Do not add any new information.\n\n"
+            f"Reply:\n{spoken_text}"
+        )
+
+        try:
+            client = genai.Client(api_key=self.api_key)
+            interaction = client.interactions.create(
+                model=self.tts_model,
+                input=prompt,
+                response_format={"type": "audio"},
+                generation_config={
+                    "speech_config": [
+                        {"voice": self.tts_voice}
+                    ]
+                },
+                store=False,
+            )
+            output_audio = getattr(interaction, "output_audio", None)
+            audio_data = getattr(output_audio, "data", None) if output_audio else None
+            if not audio_data:
+                return {"success": False, "status": "EMPTY_TTS_AUDIO"}
+
+            if isinstance(audio_data, bytes):
+                pcm_bytes = audio_data
+            else:
+                pcm_bytes = base64.b64decode(str(audio_data))
+
+            if not pcm_bytes:
+                return {"success": False, "status": "EMPTY_TTS_PCM"}
+
+            return {
+                "success": True,
+                "status": "SYNTHESIZED",
+                "content": pcm_bytes,
+                "sample_rate": 24000,
+                "channels": 1,
+                "sample_width": 2,
+                "spoken_text": spoken_text,
+                "model": self.tts_model,
+                "voice": self.tts_voice,
+            }
+        except Exception as error:
+            return {
+                "success": False,
+                "status": "TTS_GENERATION_ERROR",
+                "error": str(error),
+            }
+
+    def prepare_spoken_text(self, text: str) -> str:
+        clean = str(text or "").strip()
+        if not clean:
+            return ""
+
+        # Do not make the assistant read long map/web URLs character-by-character.
+        clean = re.sub(
+            r"https?://\S+",
+            " లింక్ టెక్స్ట్ మెసేజ్‌లో ఉంది ",
+            clean,
+            flags=re.IGNORECASE,
+        )
+        clean = clean.replace("#", " నంబర్ ")
+        clean = " ".join(clean.split())
+        if len(clean) > self.voice_reply_max_chars:
+            clean = clean[: self.voice_reply_max_chars].rsplit(" ", 1)[0].strip()
+        return clean
+
     @staticmethod
     def normalize_spoken_choice(text: str) -> str:
         clean = " ".join(str(text).strip().split())
@@ -138,8 +229,6 @@ class VoiceAssistantService:
     @staticmethod
     def _normalize_mime_type(mime_type: Optional[str]) -> str:
         raw = str(mime_type or "audio/ogg").strip().lower()
-        # WhatsApp voice notes commonly include codec parameters such as
-        # audio/ogg; codecs=opus. Gemini expects the base MIME type.
         return raw.split(";", 1)[0].strip() or "audio/ogg"
 
     @staticmethod
