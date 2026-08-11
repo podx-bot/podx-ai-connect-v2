@@ -6,9 +6,10 @@ from fastapi.responses import PlainTextResponse
 
 from app.models.session import ConversationStep
 from app.whatsapp.payload_parser import (
+    extract_audio_messages,
     extract_delivery_statuses,
     extract_location_messages,
-    extract_text_messages
+    extract_text_messages,
 )
 
 router = APIRouter(tags=["WhatsApp"])
@@ -20,12 +21,39 @@ def visible_log(message: str) -> None:
     logger.info(message)
 
 
+def _process_user_text(container, sender_mobile: str, message: str) -> str:
+    easy_reply = container.easy_job_command_service.process_text(
+        sender_mobile=sender_mobile,
+        message=message,
+    )
+    if easy_reply is not None:
+        visible_log(
+            f"EASY JOB COMMAND: sender={sender_mobile} text={message}"
+        )
+        return easy_reply
+
+    lifecycle_reply = container.job_lifecycle_service.process_text(
+        sender_mobile=sender_mobile,
+        message=message,
+    )
+    if lifecycle_reply is not None:
+        visible_log(
+            f"JOB LIFECYCLE COMMAND: sender={sender_mobile} text={message}"
+        )
+        return lifecycle_reply
+
+    return container.conversation_service.process(
+        sender_mobile=sender_mobile,
+        message=message,
+    )
+
+
 @router.get("/webhook", response_class=PlainTextResponse)
 def verify_webhook(
     request: Request,
     hub_mode: Optional[str] = Query(default=None, alias="hub.mode"),
     hub_verify_token: Optional[str] = Query(default=None, alias="hub.verify_token"),
-    hub_challenge: Optional[str] = Query(default=None, alias="hub.challenge")
+    hub_challenge: Optional[str] = Query(default=None, alias="hub.challenge"),
 ):
     container = request.app.state.container
     if (
@@ -53,6 +81,7 @@ async def receive_webhook(request: Request) -> dict:
     try:
         statuses = extract_delivery_statuses(payload)
         text_messages = extract_text_messages(payload)
+        audio_messages = extract_audio_messages(payload)
         location_messages = extract_location_messages(payload)
     except Exception as error:
         visible_log(f"WHATSAPP PARSER ERROR: {type(error).__name__}: {error}")
@@ -61,11 +90,12 @@ async def receive_webhook(request: Request) -> dict:
     visible_log(
         "WHATSAPP INCOMING: "
         f"text={len(text_messages)} "
+        f"audio={len(audio_messages)} "
         f"location={len(location_messages)} "
         f"status={len(statuses)}"
     )
 
-    if not statuses and not text_messages and not location_messages:
+    if not statuses and not text_messages and not audio_messages and not location_messages:
         visible_log(f"WHATSAPP IGNORED PAYLOAD: object={payload.get('object')}")
 
     for status in statuses:
@@ -74,7 +104,7 @@ async def receive_webhook(request: Request) -> dict:
                 provider_message_id=status.provider_message_id,
                 recipient_mobile=status.recipient_mobile,
                 status=status.status,
-                error_message=status.error_message
+                error_message=status.error_message,
             )
             visible_log(
                 "WHATSAPP DELIVERY STATUS: "
@@ -96,60 +126,122 @@ async def receive_webhook(request: Request) -> dict:
                 f"id={incoming.provider_message_id} "
                 f"text={incoming.message_text}"
             )
-
             if container.inbound_message_repository.exists(incoming.provider_message_id):
                 visible_log(
-                    "WHATSAPP DUPLICATE TEXT SKIPPED: "
-                    f"id={incoming.provider_message_id}"
+                    f"WHATSAPP DUPLICATE TEXT SKIPPED: id={incoming.provider_message_id}"
                 )
                 continue
 
             container.inbound_message_repository.save(
                 provider_message_id=incoming.provider_message_id,
                 sender_mobile=incoming.sender_mobile,
-                message_text=incoming.message_text
+                message_text=incoming.message_text,
             )
-
-            lifecycle_reply = container.job_lifecycle_service.process_text(
-                sender_mobile=incoming.sender_mobile,
-                message=incoming.message_text
+            reply_text = _process_user_text(
+                container,
+                incoming.sender_mobile,
+                incoming.message_text,
             )
-            if lifecycle_reply is not None:
-                reply_text = lifecycle_reply
-                visible_log(
-                    "JOB LIFECYCLE COMMAND: "
-                    f"sender={incoming.sender_mobile} text={incoming.message_text}"
-                )
-            else:
-                reply_text = container.conversation_service.process(
-                    sender_mobile=incoming.sender_mobile,
-                    message=incoming.message_text
-                )
-
             visible_log(
-                "WHATSAPP REPLY CREATED: "
-                f"sender={incoming.sender_mobile} reply={reply_text}"
+                f"WHATSAPP REPLY CREATED: sender={incoming.sender_mobile} reply={reply_text}"
             )
+            send_result = container.whatsapp_service.send_text_message(
+                recipient_mobile=incoming.sender_mobile,
+                message=reply_text,
+            )
+            visible_log(
+                f"WHATSAPP TEXT SEND RESULT: sender={incoming.sender_mobile} result={send_result}"
+            )
+            replies.append(
+                {
+                    "message_type": "text",
+                    "sender_mobile": incoming.sender_mobile,
+                    "reply": reply_text,
+                    "send_result": send_result,
+                }
+            )
+        except Exception as error:
+            visible_log(
+                f"WHATSAPP TEXT PROCESSING ERROR: {type(error).__name__}: {error}"
+            )
+
+    for incoming in audio_messages:
+        try:
+            visible_log(
+                "WHATSAPP AUDIO RECEIVED: "
+                f"sender={incoming.sender_mobile} id={incoming.provider_message_id} "
+                f"media_id={incoming.media_id} mime={incoming.mime_type} voice={incoming.is_voice}"
+            )
+            if container.inbound_message_repository.exists(incoming.provider_message_id):
+                visible_log(
+                    f"WHATSAPP DUPLICATE AUDIO SKIPPED: id={incoming.provider_message_id}"
+                )
+                continue
+
+            container.inbound_message_repository.save(
+                provider_message_id=incoming.provider_message_id,
+                sender_mobile=incoming.sender_mobile,
+                message_text=f"AUDIO:{incoming.media_id}",
+            )
+
+            media_result = container.whatsapp_service.download_media(incoming.media_id)
+            if not media_result.get("success"):
+                visible_log(
+                    f"WHATSAPP AUDIO DOWNLOAD FAILED: sender={incoming.sender_mobile} result={media_result}"
+                )
+                reply_text = (
+                    "🎙️ మీ voice message తీసుకోలేకపోయాను. "
+                    "దయచేసి చిన్న voice note మళ్లీ పంపండి లేదా textలో పంపండి."
+                )
+                transcript = None
+            else:
+                transcription = container.voice_assistant_service.transcribe(
+                    audio_bytes=media_result["content"],
+                    mime_type=media_result.get("mime_type") or incoming.mime_type,
+                )
+                if not transcription.get("success"):
+                    visible_log(
+                        "GEMINI VOICE TRANSCRIPTION FAILED: "
+                        f"sender={incoming.sender_mobile} status={transcription.get('status')} "
+                        f"http={transcription.get('http_status')}"
+                    )
+                    reply_text = (
+                        "🎙️ మీ మాట స్పష్టంగా అర్థం కాలేదు. "
+                        "దయచేసి మళ్లీ చిన్నగా చెప్పండి లేదా textలో పంపండి."
+                    )
+                    transcript = None
+                else:
+                    transcript = container.voice_assistant_service.normalize_spoken_choice(
+                        transcription["transcript"]
+                    )
+                    visible_log(
+                        f"GEMINI VOICE TRANSCRIPT: sender={incoming.sender_mobile} transcript={transcript}"
+                    )
+                    reply_text = _process_user_text(
+                        container,
+                        incoming.sender_mobile,
+                        transcript,
+                    )
 
             send_result = container.whatsapp_service.send_text_message(
                 recipient_mobile=incoming.sender_mobile,
-                message=reply_text
+                message=reply_text,
             )
             visible_log(
-                "WHATSAPP TEXT SEND RESULT: "
-                f"sender={incoming.sender_mobile} result={send_result}"
+                f"WHATSAPP AUDIO REPLY RESULT: sender={incoming.sender_mobile} result={send_result}"
             )
-
-            replies.append({
-                "message_type": "text",
-                "sender_mobile": incoming.sender_mobile,
-                "reply": reply_text,
-                "send_result": send_result
-            })
+            replies.append(
+                {
+                    "message_type": "audio",
+                    "sender_mobile": incoming.sender_mobile,
+                    "transcript": transcript,
+                    "reply": reply_text,
+                    "send_result": send_result,
+                }
+            )
         except Exception as error:
             visible_log(
-                "WHATSAPP TEXT PROCESSING ERROR: "
-                f"{type(error).__name__}: {error}"
+                f"WHATSAPP AUDIO PROCESSING ERROR: {type(error).__name__}: {error}"
             )
 
     for incoming in location_messages:
@@ -159,43 +251,34 @@ async def receive_webhook(request: Request) -> dict:
                 f"sender={incoming.sender_mobile} "
                 f"latitude={incoming.latitude} longitude={incoming.longitude}"
             )
-
             if container.inbound_message_repository.exists(incoming.provider_message_id):
                 visible_log(
-                    "WHATSAPP DUPLICATE LOCATION SKIPPED: "
-                    f"id={incoming.provider_message_id}"
+                    f"WHATSAPP DUPLICATE LOCATION SKIPPED: id={incoming.provider_message_id}"
                 )
                 continue
 
             container.inbound_message_repository.save(
                 provider_message_id=incoming.provider_message_id,
                 sender_mobile=incoming.sender_mobile,
-                message_text=(
-                    f"LOCATION:{incoming.latitude:.7f},{incoming.longitude:.7f}"
-                )
+                message_text=f"LOCATION:{incoming.latitude:.7f},{incoming.longitude:.7f}",
             )
 
             session = container.session_registry.get(incoming.sender_mobile)
-
             if session.step == ConversationStep.WORKER_LOCATION:
                 worker_category = session.data.get("category")
                 worker_experience = session.data.get("experience")
                 worker_availability = session.data.get("availability")
-
                 container.user_repository.save_location(
                     whatsapp_mobile=incoming.sender_mobile,
                     latitude=incoming.latitude,
                     longitude=incoming.longitude,
                     location_name=incoming.name,
-                    location_address=incoming.address
+                    location_address=incoming.address,
                 )
-                container.user_repository.complete_worker_registration(
-                    incoming.sender_mobile
-                )
+                container.user_repository.complete_worker_registration(incoming.sender_mobile)
                 session.step = ConversationStep.MAIN_MENU
                 session.data.clear()
                 container.session_registry.save(incoming.sender_mobile)
-
                 reply_text = (
                     "🎉 Worker Registration పూర్తైంది!\n\n"
                     f"పని: {worker_category}\n"
@@ -211,17 +294,15 @@ async def receive_webhook(request: Request) -> dict:
                     latitude=incoming.latitude,
                     longitude=incoming.longitude,
                     location_name=incoming.name,
-                    location_address=incoming.address
+                    location_address=incoming.address,
                 )
-
                 session.step = ConversationStep.MAIN_MENU
                 session.data.clear()
                 container.session_registry.save(incoming.sender_mobile)
 
                 if job is None:
                     visible_log(
-                        "JOB MATCHING SKIPPED: "
-                        f"sender={incoming.sender_mobile} reason=no_draft_job"
+                        f"JOB MATCHING SKIPPED: sender={incoming.sender_mobile} reason=no_draft_job"
                     )
                     reply_text = (
                         "⚠️ Job details దొరకలేదు. Hi పంపి Employer workflowను మళ్లీ ప్రారంభించండి."
@@ -253,13 +334,12 @@ async def receive_webhook(request: Request) -> dict:
                     latitude=incoming.latitude,
                     longitude=incoming.longitude,
                     location_name=incoming.name,
-                    location_address=incoming.address
+                    location_address=incoming.address,
                 )
-
                 tracking_reply = container.job_lifecycle_service.handle_location(
                     worker_mobile=incoming.sender_mobile,
                     latitude=incoming.latitude,
-                    longitude=incoming.longitude
+                    longitude=incoming.longitude,
                 )
                 if tracking_reply is not None:
                     visible_log(
@@ -278,31 +358,31 @@ async def receive_webhook(request: Request) -> dict:
 
             send_result = container.whatsapp_service.send_text_message(
                 recipient_mobile=incoming.sender_mobile,
-                message=reply_text
+                message=reply_text,
             )
             visible_log(
-                "WHATSAPP LOCATION SEND RESULT: "
-                f"sender={incoming.sender_mobile} result={send_result}"
+                f"WHATSAPP LOCATION SEND RESULT: sender={incoming.sender_mobile} result={send_result}"
             )
-
-            replies.append({
-                "message_type": "location",
-                "sender_mobile": incoming.sender_mobile,
-                "latitude": incoming.latitude,
-                "longitude": incoming.longitude,
-                "reply": reply_text,
-                "send_result": send_result
-            })
+            replies.append(
+                {
+                    "message_type": "location",
+                    "sender_mobile": incoming.sender_mobile,
+                    "latitude": incoming.latitude,
+                    "longitude": incoming.longitude,
+                    "reply": reply_text,
+                    "send_result": send_result,
+                }
+            )
         except Exception as error:
             visible_log(
-                "WHATSAPP LOCATION PROCESSING ERROR: "
-                f"{type(error).__name__}: {error}"
+                f"WHATSAPP LOCATION PROCESSING ERROR: {type(error).__name__}: {error}"
             )
 
     return {
         "status": "processed",
         "incoming_text_count": len(text_messages),
+        "incoming_audio_count": len(audio_messages),
         "incoming_location_count": len(location_messages),
         "delivery_status_count": len(statuses),
-        "replies": replies
+        "replies": replies,
     }
