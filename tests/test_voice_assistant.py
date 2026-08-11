@@ -43,6 +43,24 @@ def test_spoken_number_words_normalize_to_menu_digits():
     assert VoiceAssistantService.normalize_spoken_choice("కేటరింగ్") == "కేటరింగ్"
 
 
+def test_spoken_reply_does_not_read_long_web_url():
+    service = VoiceAssistantService(api_key="test-key")
+    prepared = service.prepare_spoken_text(
+        "Job location: https://maps.google.com/?q=16.3,80.8 ఇప్పుడు బయలుదేరండి"
+    )
+
+    assert "https://" not in prepared
+    assert "లింక్ టెక్స్ట్ మెసేజ్‌లో ఉంది" in prepared
+    assert "ఇప్పుడు బయలుదేరండి" in prepared
+
+
+def test_spoken_reply_respects_max_character_limit():
+    service = VoiceAssistantService(api_key="test-key", voice_reply_max_chars=100)
+    prepared = service.prepare_spoken_text("పని " * 100)
+
+    assert len(prepared) <= 100
+
+
 class _FakeDatabase:
     def __init__(self, pending_job_id=None):
         self.pending_job_id = pending_job_id
