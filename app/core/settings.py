@@ -17,6 +17,10 @@ class Settings:
     gemini_api_key: str
     gemini_voice_model: str
     gemini_voice_max_bytes: int
+    gemini_tts_model: str
+    gemini_tts_voice: str
+    voice_reply_enabled: bool
+    voice_reply_max_chars: int
 
 
 def _database_path() -> str:
@@ -43,6 +47,17 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def load_settings() -> Settings:
     return Settings(
         database_path=_database_path(),
@@ -51,15 +66,28 @@ def load_settings() -> Settings:
         whatsapp_api_version=os.getenv("WHATSAPP_API_VERSION", "v23.0").strip(),
         whatsapp_webhook_verify_token=os.getenv(
             "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
-            "podx_verify_2026"
+            "podx_verify_2026",
         ).strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_voice_model=os.getenv(
             "GEMINI_VOICE_MODEL",
-            "gemini-2.5-flash"
+            "gemini-2.5-flash",
         ).strip(),
         gemini_voice_max_bytes=_positive_int_env(
             "GEMINI_VOICE_MAX_BYTES",
-            18 * 1024 * 1024
-        )
+            18 * 1024 * 1024,
+        ),
+        gemini_tts_model=os.getenv(
+            "GEMINI_TTS_MODEL",
+            "gemini-3.1-flash-tts-preview",
+        ).strip(),
+        gemini_tts_voice=os.getenv(
+            "GEMINI_TTS_VOICE",
+            "Sulafat",
+        ).strip(),
+        voice_reply_enabled=_bool_env("PODX_VOICE_REPLY_ENABLED", True),
+        voice_reply_max_chars=_positive_int_env(
+            "PODX_VOICE_REPLY_MAX_CHARS",
+            900,
+        ),
     )
