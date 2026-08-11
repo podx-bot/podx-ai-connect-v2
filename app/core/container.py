@@ -5,6 +5,7 @@ from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
+from app.services.audio_codec_service import AudioCodecService
 from app.services.conversation_service import ConversationService
 from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.job_lifecycle_service import JobLifecycleService
@@ -37,10 +38,14 @@ class AppContainer:
             phone_number_id=self.settings.whatsapp_phone_number_id,
             api_version=self.settings.whatsapp_api_version,
         )
+        self.audio_codec_service = AudioCodecService()
         self.voice_assistant_service = VoiceAssistantService(
             api_key=self.settings.gemini_api_key,
             model=self.settings.gemini_voice_model,
             max_audio_bytes=self.settings.gemini_voice_max_bytes,
+            tts_model=self.settings.gemini_tts_model,
+            tts_voice=self.settings.gemini_tts_voice,
+            voice_reply_max_chars=self.settings.voice_reply_max_chars,
         )
         self.job_matching_service = JobMatchingService(
             user_repository=self.user_repository,
