@@ -6,6 +6,7 @@ import httpx
 
 class WhatsAppService:
     RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
+    MAX_AUDIO_BYTES = 16 * 1024 * 1024
 
     def __init__(
         self,
@@ -13,7 +14,7 @@ class WhatsAppService:
         phone_number_id: str,
         api_version: str,
         max_attempts: int = 3,
-        retry_delay_seconds: float = 0.5
+        retry_delay_seconds: float = 0.5,
     ) -> None:
         self.access_token = access_token
         self.phone_number_id = phone_number_id
@@ -60,6 +61,146 @@ class WhatsAppService:
             if self.retry_delay_seconds:
                 time.sleep(self.retry_delay_seconds * attempt)
         return last_result
+
+    def upload_audio(
+        self,
+        audio_bytes: bytes,
+        mime_type: str = "audio/ogg",
+        file_name: str = "podx-reply.ogg",
+    ) -> dict[str, Any]:
+        if not self.is_configured():
+            return {"success": False, "status": "NOT_CONFIGURED"}
+        if not audio_bytes:
+            return {"success": False, "status": "EMPTY_AUDIO"}
+        if len(audio_bytes) > self.MAX_AUDIO_BYTES:
+            return {
+                "success": False,
+                "status": "AUDIO_TOO_LARGE",
+                "actual_bytes": len(audio_bytes),
+                "max_bytes": self.MAX_AUDIO_BYTES,
+            }
+
+        url = (
+            "https://graph.facebook.com/"
+            f"{self.api_version}/{self.phone_number_id}/media"
+        )
+        try:
+            response = httpx.post(
+                url,
+                headers=self._auth_headers(),
+                data={"messaging_product": "whatsapp"},
+                files={
+                    "file": (
+                        str(file_name),
+                        audio_bytes,
+                        str(mime_type or "audio/ogg"),
+                    )
+                },
+                timeout=60.0,
+            )
+            body = self._safe_json(response)
+            if not (200 <= response.status_code < 300):
+                return {
+                    "success": False,
+                    "status": "MEDIA_UPLOAD_HTTP_ERROR",
+                    "http_status": response.status_code,
+                    "provider_response": body,
+                }
+            media_id = str(body.get("id", "")).strip()
+            if not media_id:
+                return {
+                    "success": False,
+                    "status": "MEDIA_ID_MISSING",
+                    "provider_response": body,
+                }
+            return {
+                "success": True,
+                "status": "UPLOADED",
+                "media_id": media_id,
+                "provider_response": body,
+            }
+        except httpx.TimeoutException:
+            return {"success": False, "status": "MEDIA_UPLOAD_TIMEOUT"}
+        except httpx.HTTPError as error:
+            return {
+                "success": False,
+                "status": "MEDIA_UPLOAD_NETWORK_ERROR",
+                "error": str(error),
+            }
+
+    def send_audio_by_id(
+        self,
+        recipient_mobile: str,
+        media_id: str,
+        as_voice_message: bool = True,
+    ) -> dict[str, Any]:
+        if not self.is_configured():
+            return {"success": False, "status": "NOT_CONFIGURED", "attempts": 0}
+        clean_media_id = str(media_id).strip()
+        if not clean_media_id:
+            return {"success": False, "status": "MEDIA_ID_MISSING", "attempts": 0}
+
+        url = (
+            "https://graph.facebook.com/"
+            f"{self.api_version}/{self.phone_number_id}/messages"
+        )
+        headers = {
+            **self._auth_headers(),
+            "Content-Type": "application/json",
+        }
+        audio_object: dict[str, Any] = {"id": clean_media_id}
+        if as_voice_message:
+            audio_object["voice"] = True
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": "".join(
+                character for character in str(recipient_mobile) if character.isdigit()
+            ),
+            "type": "audio",
+            "audio": audio_object,
+        }
+
+        last_result: dict[str, Any] = {}
+        for attempt in range(1, self.max_attempts + 1):
+            last_result = self._send_once(url, headers, payload)
+            last_result["attempts"] = attempt
+            if last_result.get("success"):
+                return last_result
+            if not last_result.get("retryable") or attempt >= self.max_attempts:
+                return last_result
+            if self.retry_delay_seconds:
+                time.sleep(self.retry_delay_seconds * attempt)
+        return last_result
+
+    def send_voice_bytes(
+        self,
+        recipient_mobile: str,
+        audio_bytes: bytes,
+        mime_type: str = "audio/ogg",
+        file_name: str = "podx-reply.ogg",
+    ) -> dict[str, Any]:
+        upload_result = self.upload_audio(
+            audio_bytes=audio_bytes,
+            mime_type=mime_type,
+            file_name=file_name,
+        )
+        if not upload_result.get("success"):
+            return {
+                "success": False,
+                "status": "VOICE_UPLOAD_FAILED",
+                "upload_result": upload_result,
+            }
+        send_result = self.send_audio_by_id(
+            recipient_mobile=recipient_mobile,
+            media_id=upload_result["media_id"],
+            as_voice_message=True,
+        )
+        return {
+            **send_result,
+            "media_id": upload_result["media_id"],
+            "upload_result": upload_result,
+        }
 
     def download_media(self, media_id: str) -> dict[str, Any]:
         """Resolve a WhatsApp media id and download its bytes using the access token."""
