@@ -94,6 +94,41 @@ def test_employer_category_menu_gets_short_worker_prompt():
     assert "1. Delivery" not in prepared
 
 
+def test_appointment_menu_becomes_short_voice_prompt():
+    service = VoiceAssistantService(api_key="test-key")
+    prepared = service.prepare_spoken_text(
+        "📅 Appointment booking ప్రారంభిద్దాం.\n\n"
+        "ఏది కావాలి?\n"
+        "1. Doctor\n2. Hospital/Clinic\n3. Salon\n4. Beauty Parlour\n5. Other"
+    )
+
+    assert "1. Doctor" not in prepared
+    assert "appointment type" in prepared
+    assert len(prepared) < 120
+
+
+def test_appointment_steps_are_short_for_voice():
+    service = VoiceAssistantService(api_key="test-key")
+
+    area = service.prepare_spoken_text(
+        "✅ Salon. ఇప్పుడు మీ area / locality పేరు చెప్పండి."
+    )
+    date = service.prepare_spoken_text(
+        "ఏ రోజు appointment కావాలి? ఉదాహరణ: Today, Tomorrow లేదా 15-08-2026."
+    )
+    time = service.prepare_spoken_text(
+        "ఏ సమయం కావాలి? ఉదాహరణ: 10 AM, 4:30 PM లేదా Evening."
+    )
+    saved = service.prepare_spoken_text(
+        "✅ Appointment request save అయింది. Request ID: #1 Type: Salon"
+    )
+
+    assert area == "మీ area లేదా locality పేరు చెప్పండి."
+    assert "Today" in date
+    assert "10 AM" in time
+    assert "text messageలో" in saved
+
+
 class _FakeDatabase:
     def __init__(self, pending_job_id=None):
         self.pending_job_id = pending_job_id
