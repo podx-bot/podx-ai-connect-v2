@@ -20,6 +20,16 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.APPOINTMENT_TIME,
     }
 
+    # These are still early, menu-like job states. A strong new intent such as
+    # "salon appointment కావాలి" should be allowed to leave them instead of being
+    # treated as an invalid job category/service choice.
+    INTENT_SWITCH_STEPS = {
+        ConversationStep.START,
+        ConversationStep.MAIN_MENU,
+        ConversationStep.WORKER_CATEGORY,
+        ConversationStep.EMPLOYER_SERVICE,
+    }
+
     def __init__(
         self,
         user_repository,
@@ -50,31 +60,36 @@ class IntentAwareConversationService(ConversationService):
             if appointment_reply is not None:
                 return appointment_reply
 
-        router_allowed = registered and session.step in {
-            ConversationStep.START,
-            ConversationStep.MAIN_MENU,
-        }
+        router_allowed = registered and session.step in self.INTENT_SWITCH_STEPS
 
         if router_allowed:
             classification = self.intent_router.classify(clean_message)
             intent = classification.get("intent", "UNKNOWN")
-            routed_command = self.ROUTED_COMMANDS.get(intent)
-            if routed_command:
-                return super().process(sender_mobile, routed_command)
 
+            # Cross-module intent switching is intentionally conservative: only a
+            # clearly recognized appointment intent may interrupt an early job menu.
+            # Normal job menu choices still fall through to the existing workflow.
             if intent == "APPOINTMENT" and self.appointment_service:
                 return self.appointment_service.start(sender_mobile)
-            if intent == "SERVICE":
-                return self._reply(
-                    sender_mobile,
-                    "🛠️ మీకు local service కావాలని అర్థమైంది. "
-                    "Services module త్వరలో nearby providersకి directగా connect చేస్తుంది.",
-                )
-            if intent == "SHOP_PRODUCT":
-                return self._reply(
-                    sender_mobile,
-                    "🛍️ మీరు shop/product గురించి అడుగుతున్నారని అర్థమైంది. "
-                    "Shops & Products module త్వరలో local availability, price, contact చూపిస్తుంది.",
-                )
+
+            # Existing command routing is allowed only from the conversational home,
+            # so a category choice like "1" inside a job flow is never hijacked.
+            if session.step in {ConversationStep.START, ConversationStep.MAIN_MENU}:
+                routed_command = self.ROUTED_COMMANDS.get(intent)
+                if routed_command:
+                    return super().process(sender_mobile, routed_command)
+
+                if intent == "SERVICE":
+                    return self._reply(
+                        sender_mobile,
+                        "🛠️ మీకు local service కావాలని అర్థమైంది. "
+                        "Services module త్వరలో nearby providersకి directగా connect చేస్తుంది.",
+                    )
+                if intent == "SHOP_PRODUCT":
+                    return self._reply(
+                        sender_mobile,
+                        "🛍️ మీరు shop/product గురించి అడుగుతున్నారని అర్థమైంది. "
+                        "Shops & Products module త్వరలో local availability, price, contact చూపిస్తుంది.",
+                    )
 
         return super().process(sender_mobile, clean_message)
