@@ -13,12 +13,26 @@ class IntentAwareConversationService(ConversationService):
         "HELP": "4",
     }
 
-    def __init__(self, user_repository, session_registry, intent_router: IntentRouterService) -> None:
+    APPOINTMENT_STEPS = {
+        ConversationStep.APPOINTMENT_CATEGORY,
+        ConversationStep.APPOINTMENT_AREA,
+        ConversationStep.APPOINTMENT_DATE,
+        ConversationStep.APPOINTMENT_TIME,
+    }
+
+    def __init__(
+        self,
+        user_repository,
+        session_registry,
+        intent_router: IntentRouterService,
+        appointment_service=None,
+    ) -> None:
         super().__init__(
             user_repository=user_repository,
             session_registry=session_registry,
         )
         self.intent_router = intent_router
+        self.appointment_service = appointment_service
 
     def process(self, sender_mobile: str, message: str) -> str:
         clean_message = str(message or "").strip()
@@ -28,8 +42,14 @@ class IntentAwareConversationService(ConversationService):
             existing_user and existing_user.get("registration_complete") == 1
         )
 
-        # Never let intent classification interrupt registration or an active
-        # multi-step job workflow. It is used only at the conversational home.
+        if self.appointment_service and session.step in self.APPOINTMENT_STEPS:
+            appointment_reply = self.appointment_service.process(
+                sender_mobile,
+                clean_message,
+            )
+            if appointment_reply is not None:
+                return appointment_reply
+
         router_allowed = registered and session.step in {
             ConversationStep.START,
             ConversationStep.MAIN_MENU,
@@ -42,14 +62,8 @@ class IntentAwareConversationService(ConversationService):
             if routed_command:
                 return super().process(sender_mobile, routed_command)
 
-            # These product intents are recognized now so future modules can plug
-            # into the same router without changing the WhatsApp entry point.
-            if intent == "APPOINTMENT":
-                return self._reply(
-                    sender_mobile,
-                    "📅 మీకు Appointment/Booking కావాలని అర్థమైంది. "
-                    "Appointments module త్వరలో ఇదే PODXలో direct bookingకి connect అవుతుంది.",
-                )
+            if intent == "APPOINTMENT" and self.appointment_service:
+                return self.appointment_service.start(sender_mobile)
             if intent == "SERVICE":
                 return self._reply(
                     sender_mobile,
