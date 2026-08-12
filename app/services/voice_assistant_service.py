@@ -16,6 +16,7 @@ class VoiceAssistantService:
         tts_model: str = "gemini-3.1-flash-tts-preview",
         tts_voice: str = "Sulafat",
         voice_reply_max_chars: int = 900,
+        tts_cache_size: int = 32,
     ) -> None:
         self.api_key = str(api_key).strip()
         self.model = str(model).strip() or "gemini-3.6-flash"
@@ -23,6 +24,8 @@ class VoiceAssistantService:
         self.tts_model = str(tts_model).strip() or "gemini-3.1-flash-tts-preview"
         self.tts_voice = str(tts_voice).strip() or "Sulafat"
         self.voice_reply_max_chars = max(100, int(voice_reply_max_chars))
+        self.tts_cache_size = max(1, int(tts_cache_size))
+        self._tts_cache: dict[str, bytes] = {}
 
     def is_configured(self) -> bool:
         return bool(self.api_key and self.model)
@@ -98,6 +101,21 @@ class VoiceAssistantService:
         if not spoken_text:
             return {"success": False, "status": "EMPTY_TTS_TEXT"}
 
+        cached_pcm = self._tts_cache.get(spoken_text)
+        if cached_pcm:
+            return {
+                "success": True,
+                "status": "SYNTHESIZED_CACHE",
+                "content": cached_pcm,
+                "sample_rate": 24000,
+                "channels": 1,
+                "sample_width": 2,
+                "spoken_text": spoken_text,
+                "model": self.tts_model,
+                "voice": self.tts_voice,
+                "cache_hit": True,
+            }
+
         prompt = (
             "Speak the following PODX WhatsApp reply naturally and clearly. "
             "Use the language already present in the reply. "
@@ -133,6 +151,7 @@ class VoiceAssistantService:
             if not pcm_bytes:
                 return {"success": False, "status": "EMPTY_TTS_PCM"}
 
+            self._cache_tts(spoken_text, pcm_bytes)
             return {
                 "success": True,
                 "status": "SYNTHESIZED",
@@ -143,6 +162,7 @@ class VoiceAssistantService:
                 "spoken_text": spoken_text,
                 "model": self.tts_model,
                 "voice": self.tts_voice,
+                "cache_hit": False,
             }
         except Exception as error:
             return {
@@ -150,6 +170,14 @@ class VoiceAssistantService:
                 "status": "TTS_GENERATION_ERROR",
                 "error": str(error),
             }
+
+    def _cache_tts(self, spoken_text: str, pcm_bytes: bytes) -> None:
+        if spoken_text in self._tts_cache:
+            self._tts_cache.pop(spoken_text, None)
+        self._tts_cache[spoken_text] = pcm_bytes
+        while len(self._tts_cache) > self.tts_cache_size:
+            oldest_key = next(iter(self._tts_cache))
+            self._tts_cache.pop(oldest_key, None)
 
     def prepare_spoken_text(self, text: str) -> str:
         clean = str(text or "").strip()
@@ -174,8 +202,33 @@ class VoiceAssistantService:
 
     @staticmethod
     def _short_menu_voice_prompt(text: str) -> str:
-        """Keep rich WhatsApp menus in text while speaking a short natural prompt."""
+        """Keep rich WhatsApp text while speaking only the useful next action."""
         lowered = str(text or "").lower()
+
+        if (
+            "appointment booking" in lowered
+            and "doctor" in lowered
+            and "hospital/clinic" in lowered
+            and "salon" in lowered
+            and "beauty parlour" in lowered
+        ):
+            return (
+                "మీ appointment type చెప్పండి. "
+                "Doctor, Hospital, Salon లేదా Beauty Parlour."
+            )
+
+        if "area / locality" in lowered and "చెప్పండి" in lowered:
+            return "మీ area లేదా locality పేరు చెప్పండి."
+
+        if "ఏ రోజు appointment" in lowered:
+            return "Appointment ఏ రోజు కావాలో చెప్పండి. Today, Tomorrow లేదా date చెప్పండి."
+
+        if "ఏ సమయం కావాలి" in lowered:
+            return "Appointment time చెప్పండి. ఉదాహరణకు 10 AM లేదా 4:30 PM."
+
+        if "appointment request save అయింది" in lowered:
+            return "మీ appointment request save అయింది. పూర్తి వివరాలు text messageలో ఉన్నాయి."
+
         category_markers = (
             "delivery",
             "catering",
