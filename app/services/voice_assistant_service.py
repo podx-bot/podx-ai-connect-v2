@@ -156,6 +156,10 @@ class VoiceAssistantService:
         if not clean:
             return ""
 
+        short_prompt = self._short_menu_voice_prompt(clean)
+        if short_prompt:
+            clean = short_prompt
+
         clean = re.sub(
             r"https?://\S+",
             " లింక్ టెక్స్ట్ మెసేజ్‌లో ఉంది ",
@@ -167,6 +171,31 @@ class VoiceAssistantService:
         if len(clean) > self.voice_reply_max_chars:
             clean = clean[: self.voice_reply_max_chars].rsplit(" ", 1)[0].strip()
         return clean
+
+    @staticmethod
+    def _short_menu_voice_prompt(text: str) -> str:
+        """Keep rich WhatsApp menus in text while speaking a short natural prompt."""
+        lowered = str(text or "").lower()
+        category_markers = (
+            "delivery",
+            "catering",
+            "warehouse",
+            "driver",
+            "electrician",
+        )
+        if not all(marker in lowered for marker in category_markers):
+            return ""
+
+        if any(term in lowered for term in ("workers కావాలి", "వర్కర్స్", "employer")):
+            return (
+                "మీకు ఏ పని కోసం workers కావాలో నేరుగా చెప్పండి. "
+                "ఉదాహరణకు Delivery, Catering, Driver లేదా Electrician."
+            )
+
+        return (
+            "మీరు ఏ పని కోసం చూస్తున్నారో నేరుగా చెప్పండి. "
+            "ఉదాహరణకు Delivery, Catering, Driver లేదా Electrician."
+        )
 
     @staticmethod
     def normalize_spoken_choice(text: str) -> str:
