@@ -35,8 +35,8 @@ class FakeAppointmentService:
     def __init__(self):
         self.started = []
 
-    def start(self, sender_mobile):
-        self.started.append(sender_mobile)
+    def start(self, sender_mobile, initial_message=""):
+        self.started.append((sender_mobile, initial_message))
         return "APPOINTMENT_STARTED"
 
     def process(self, sender_mobile, message):
@@ -53,7 +53,8 @@ def test_clear_appointment_request_can_leave_worker_category_menu():
         appointment_service=appointment_service,
     )
 
-    result = service.process("9199", "సెలూన్ కోసం అపాయింట్మెంట్ కావాలి")
+    message = "సెలూన్ కోసం అపాయింట్మెంట్ కావాలి"
+    result = service.process("9199", message)
 
     assert result == "APPOINTMENT_STARTED"
-    assert appointment_service.started == ["9199"]
+    assert appointment_service.started == [("9199", message)]
