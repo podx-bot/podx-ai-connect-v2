@@ -61,6 +61,39 @@ def test_spoken_reply_respects_max_character_limit():
     assert len(prepared) <= 100
 
 
+def test_long_job_category_menu_becomes_short_natural_voice_prompt():
+    service = VoiceAssistantService(api_key="test-key")
+    text_reply = (
+        "💼 మీరు ఏ పని కోసం చూస్తున్నారు?\n\n"
+        "1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n"
+        "5. House Cleaning\n6. Driver\n7. AC Technician\n"
+        "8. Electrician\n9. Other"
+    )
+
+    prepared = service.prepare_spoken_text(text_reply)
+
+    assert "1. Delivery" not in prepared
+    assert "9. Other" not in prepared
+    assert "నేరుగా చెప్పండి" in prepared
+    assert "Driver" in prepared
+    assert len(prepared) < 180
+
+
+def test_employer_category_menu_gets_short_worker_prompt():
+    service = VoiceAssistantService(api_key="test-key")
+    text_reply = (
+        "Employer workflow. వర్కర్స్ కావాలి.\n"
+        "1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n"
+        "5. House Cleaning\n6. Driver\n7. AC Technician\n"
+        "8. Electrician\n9. Other"
+    )
+
+    prepared = service.prepare_spoken_text(text_reply)
+
+    assert "workers కావాలో" in prepared
+    assert "1. Delivery" not in prepared
+
+
 class _FakeDatabase:
     def __init__(self, pending_job_id=None):
         self.pending_job_id = pending_job_id
