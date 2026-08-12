@@ -13,8 +13,8 @@ from app.services.intent_aware_conversation_service import IntentAwareConversati
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
+from app.services.retrying_voice_assistant_service import RetryingVoiceAssistantService
 from app.services.session_registry import SessionRegistry
-from app.services.voice_assistant_service import VoiceAssistantService
 from app.whatsapp.whatsapp_service import WhatsAppService
 
 
@@ -53,13 +53,14 @@ class AppContainer:
             api_version=self.settings.whatsapp_api_version,
         )
         self.audio_codec_service = AudioCodecService()
-        self.voice_assistant_service = VoiceAssistantService(
+        self.voice_assistant_service = RetryingVoiceAssistantService(
             api_key=self.settings.gemini_api_key,
             model=self.settings.gemini_voice_model,
             max_audio_bytes=self.settings.gemini_voice_max_bytes,
             tts_model=self.settings.gemini_tts_model,
             tts_voice=self.settings.gemini_tts_voice,
             voice_reply_max_chars=self.settings.voice_reply_max_chars,
+            transcription_attempts=2,
         )
         self.job_matching_service = JobMatchingService(
             user_repository=self.user_repository,
