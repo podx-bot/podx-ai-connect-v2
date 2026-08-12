@@ -2,7 +2,6 @@ import base64
 import re
 from typing import Any, Optional
 
-import httpx
 from google import genai
 
 
@@ -12,14 +11,14 @@ class VoiceAssistantService:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.6-flash",
         max_audio_bytes: int = 18 * 1024 * 1024,
         tts_model: str = "gemini-3.1-flash-tts-preview",
         tts_voice: str = "Sulafat",
         voice_reply_max_chars: int = 900,
     ) -> None:
         self.api_key = str(api_key).strip()
-        self.model = str(model).strip() or "gemini-2.5-flash"
+        self.model = str(model).strip() or "gemini-3.6-flash"
         self.max_audio_bytes = max(1, int(max_audio_bytes))
         self.tts_model = str(tts_model).strip() or "gemini-3.1-flash-tts-preview"
         self.tts_voice = str(tts_voice).strip() or "Sulafat"
@@ -45,14 +44,6 @@ class VoiceAssistantService:
             }
 
         effective_mime = self._normalize_mime_type(mime_type)
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:generateContent"
-        )
-        headers = {
-            "x-goog-api-key": self.api_key,
-            "Content-Type": "application/json",
-        }
         prompt = (
             "Transcribe only the spoken words in this audio. "
             "The speaker may use Telugu, English, Hindi, or mixed speech. "
@@ -61,62 +52,41 @@ class VoiceAssistantService:
             "Do not explain, summarize, translate, add labels, or add punctuation "
             "that was not needed. Return only the transcription text."
         )
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": effective_mime,
-                                "data": base64.b64encode(audio_bytes).decode("ascii"),
-                            }
-                        },
-                    ],
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0,
-                "maxOutputTokens": 256,
-            },
-        }
 
         try:
-            response = httpx.post(url, headers=headers, json=payload, timeout=90.0)
-            try:
-                body = response.json()
-            except ValueError:
-                body = {"raw_response": response.text}
-
-            if not (200 <= response.status_code < 300):
-                return {
-                    "success": False,
-                    "status": "GEMINI_HTTP_ERROR",
-                    "http_status": response.status_code,
-                    "provider_response": body,
-                }
-
-            transcript = self._extract_text(body)
+            client = genai.Client(api_key=self.api_key)
+            interaction = client.interactions.create(
+                model=self.model,
+                input=[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "audio",
+                        "data": base64.b64encode(audio_bytes).decode("ascii"),
+                        "mime_type": effective_mime,
+                    },
+                ],
+                store=False,
+            )
+            transcript = str(getattr(interaction, "output_text", "") or "").strip().strip('"')
             if not transcript:
                 return {
                     "success": False,
                     "status": "EMPTY_TRANSCRIPT",
-                    "provider_response": body,
+                    "model": self.model,
                 }
             return {
                 "success": True,
                 "status": "TRANSCRIBED",
                 "transcript": transcript,
                 "mime_type": effective_mime,
+                "model": self.model,
             }
-        except httpx.TimeoutException:
-            return {"success": False, "status": "GEMINI_TIMEOUT"}
-        except httpx.HTTPError as error:
+        except Exception as error:
             return {
                 "success": False,
-                "status": "GEMINI_NETWORK_ERROR",
+                "status": "GEMINI_TRANSCRIPTION_ERROR",
                 "error": str(error),
+                "model": self.model,
             }
 
     def synthesize(self, text: str) -> dict[str, Any]:
@@ -186,7 +156,6 @@ class VoiceAssistantService:
         if not clean:
             return ""
 
-        # Do not make the assistant read long map/web URLs character-by-character.
         clean = re.sub(
             r"https?://\S+",
             " లింక్ టెక్స్ట్ మెసేజ్‌లో ఉంది ",
@@ -230,15 +199,3 @@ class VoiceAssistantService:
     def _normalize_mime_type(mime_type: Optional[str]) -> str:
         raw = str(mime_type or "audio/ogg").strip().lower()
         return raw.split(";", 1)[0].strip() or "audio/ogg"
-
-    @staticmethod
-    def _extract_text(body: dict[str, Any]) -> str:
-        candidates = body.get("candidates", [])
-        if not candidates or not isinstance(candidates[0], dict):
-            return ""
-        content = candidates[0].get("content", {})
-        parts = content.get("parts", []) if isinstance(content, dict) else []
-        for part in parts:
-            if isinstance(part, dict) and part.get("text"):
-                return str(part["text"]).strip().strip('"')
-        return ""

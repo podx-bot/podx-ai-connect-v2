@@ -71,7 +71,7 @@ def load_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_voice_model=os.getenv(
             "GEMINI_VOICE_MODEL",
-            "gemini-2.5-flash",
+            "gemini-3.6-flash",
         ).strip(),
         gemini_voice_max_bytes=_positive_int_env(
             "GEMINI_VOICE_MAX_BYTES",
