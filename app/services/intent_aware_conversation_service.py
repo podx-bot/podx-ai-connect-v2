@@ -4,7 +4,7 @@ from app.services.intent_router_service import IntentRouterService
 
 
 class IntentAwareConversationService(ConversationService):
-    """Add invisible free-form routing without disturbing active workflows."""
+    """Add invisible free-form routing while allowing clear cross-flow switches."""
 
     ROUTED_COMMANDS = {
         "JOB_SEEKER": "1",
@@ -26,6 +26,8 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_CATEGORY,
         ConversationStep.EMPLOYER_SERVICE,
     }
+
+    APPOINTMENT_EXIT_INTENTS = {"JOB_SEEKER", "EMPLOYER"}
 
     def __init__(
         self,
@@ -50,6 +52,15 @@ class IntentAwareConversationService(ConversationService):
         )
 
         if self.appointment_service and session.step in self.APPOINTMENT_STEPS:
+            if registered:
+                classification = self.intent_router.classify(clean_message)
+                intent = classification.get("intent", "UNKNOWN")
+                if intent in self.APPOINTMENT_EXIT_INTENTS:
+                    session.data.clear()
+                    session.step = ConversationStep.MAIN_MENU
+                    routed_command = self.ROUTED_COMMANDS[intent]
+                    return super().process(sender_mobile, routed_command)
+
             appointment_reply = self.appointment_service.process(
                 sender_mobile,
                 clean_message,
