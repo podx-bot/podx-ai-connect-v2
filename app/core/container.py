@@ -1,10 +1,12 @@
 from app.core.settings import load_settings
 from app.database.database import Database
+from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.delivery_log_repository import DeliveryLogRepository
 from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
+from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
 from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.intent_aware_conversation_service import IntentAwareConversationService
@@ -27,16 +29,22 @@ class AppContainer:
         self.delivery_log_repository = DeliveryLogRepository(self.database)
         self.session_repository = SessionRepository(self.database)
         self.job_lifecycle_repository = JobLifecycleRepository(self.database)
+        self.appointment_repository = AppointmentRepository(self.database)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
         self.intent_router_service = IntentRouterService(
             api_key=self.settings.gemini_api_key,
             model=self.settings.gemini_voice_model,
         )
+        self.appointment_service = AppointmentService(
+            repository=self.appointment_repository,
+            session_registry=self.session_registry,
+        )
         self.conversation_service = IntentAwareConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry,
             intent_router=self.intent_router_service,
+            appointment_service=self.appointment_service,
         )
 
         self.whatsapp_service = WhatsAppService(

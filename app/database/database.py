@@ -211,6 +211,30 @@ class Database:
 
         self.execute(
             """
+            CREATE TABLE IF NOT EXISTS appointment_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_mobile TEXT NOT NULL,
+                category TEXT NOT NULL,
+                area TEXT NOT NULL,
+                preferred_date TEXT NOT NULL,
+                preferred_time TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'REQUESTED',
+                business_id INTEGER,
+                notes TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_appointment_requests_customer_status
+            ON appointment_requests(customer_mobile, status)
+            """
+        )
+
+        self.execute(
+            """
             CREATE TABLE IF NOT EXISTS inbound_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 provider_message_id TEXT UNIQUE NOT NULL,
