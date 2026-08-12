@@ -14,9 +14,6 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
         self.audio_codec_service = audio_codec_service
 
     def transcribe(self, audio_bytes: bytes, mime_type: Optional[str]) -> dict[str, Any]:
-        # First try the current Interactions path. Keep this to one attempt in
-        # production so a bad voice note does not make the user wait through
-        # repeated identical API calls.
         direct = super().transcribe(audio_bytes=audio_bytes, mime_type=mime_type)
         if direct.get("success"):
             return direct
@@ -25,9 +22,6 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
         if self.audio_codec_service is not None:
             normalized = self.audio_codec_service.audio_to_wav(audio_bytes)
 
-        # Use normalized mono 16 kHz WAV when ffmpeg can decode the WhatsApp
-        # OGG/Opus note. generateContent accepts inline audio bytes and gives us
-        # an independent fallback API path from Interactions.
         if normalized and normalized.get("success"):
             fallback = self._transcribe_generate_content(
                 audio_bytes=normalized["content"],
@@ -38,8 +32,6 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
             fallback["direct_status"] = direct.get("status")
             return fallback
 
-        # If normalization itself fails, still try the original bytes through
-        # generateContent before returning the user-facing failure.
         fallback = self._transcribe_generate_content(
             audio_bytes=audio_bytes,
             mime_type=self._normalize_mime_type(mime_type),
@@ -58,10 +50,12 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
             return {"success": False, "status": "EMPTY_AUDIO"}
 
         prompt = (
-            "Transcribe only the spoken words in this WhatsApp voice note. "
-            "The speaker may use Telugu, English, Hindi, or mixed speech. "
-            "Preserve the exact meaning and language. Do not translate, explain, "
-            "summarize, or add labels. Return only the transcription text."
+            "This is a WhatsApp voice note from an Indian user. Telugu is the primary expected language. "
+            "Accurately transcribe the spoken words. If the speaker uses Telugu, write the transcript in Telugu script. "
+            "If the speaker mixes Telugu with English words such as Salon, Doctor, Today, Tomorrow, AM or PM, preserve those clear English words naturally. "
+            "Also support Hindi or English when they are actually spoken. Preserve the user's exact meaning. "
+            "Do not translate, explain, summarize, correct the request, or add labels. "
+            "Return only the transcription text."
         )
         try:
             client = genai.Client(api_key=self.api_key)
@@ -85,6 +79,7 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
                 "transcript": transcript,
                 "mime_type": mime_type,
                 "model": self.model,
+                "language_policy": "telugu_first_preserve_input",
             }
         except Exception as error:
             return {
