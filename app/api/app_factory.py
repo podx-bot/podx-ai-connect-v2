@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.appointment_location_middleware import AppointmentLocationMiddleware
 from app.api.routes.health import router as health_router
 from app.api.routes.webhook import router as webhook_router
 from app.api.routes.debug import router as debug_router
@@ -14,6 +15,7 @@ def create_app() -> FastAPI:
 
     container = AppContainer()
     app.state.container = container
+    app.add_middleware(AppointmentLocationMiddleware, container=container)
 
     app.include_router(health_router)
     app.include_router(webhook_router)
