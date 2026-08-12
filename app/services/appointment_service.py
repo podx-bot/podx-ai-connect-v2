@@ -5,24 +5,11 @@ from app.models.session import ConversationStep
 
 class AppointmentService:
     CATEGORY_ALIASES = {
-        "1": "Doctor",
-        "doctor": "Doctor",
-        "డాక్టర్": "Doctor",
-        "2": "Hospital/Clinic",
-        "hospital": "Hospital/Clinic",
-        "clinic": "Hospital/Clinic",
-        "హాస్పిటల్": "Hospital/Clinic",
-        "క్లినిక్": "Hospital/Clinic",
-        "3": "Salon",
-        "salon": "Salon",
-        "సెలూన్": "Salon",
-        "4": "Beauty Parlour",
-        "beauty parlour": "Beauty Parlour",
-        "parlour": "Beauty Parlour",
-        "బ్యూటీ పార్లర్": "Beauty Parlour",
-        "5": "Other",
-        "other": "Other",
-        "ఇతర": "Other",
+        "1": "Doctor", "doctor": "Doctor", "డాక్టర్": "Doctor",
+        "2": "Hospital/Clinic", "hospital": "Hospital/Clinic", "clinic": "Hospital/Clinic", "హాస్పిటల్": "Hospital/Clinic", "క్లినిక్": "Hospital/Clinic",
+        "3": "Salon", "salon": "Salon", "సెలూన్": "Salon",
+        "4": "Beauty Parlour", "beauty parlour": "Beauty Parlour", "parlour": "Beauty Parlour", "బ్యూటీ పార్లర్": "Beauty Parlour",
+        "5": "Other", "other": "Other", "ఇతర": "Other",
     }
 
     def __init__(self, repository, session_registry) -> None:
@@ -36,6 +23,11 @@ class AppointmentService:
         category = self._category_from_free_text(initial_message)
         if category:
             session.data["appointment_category"] = category
+            parsed_date, parsed_time = self._extract_schedule(initial_message)
+            target = self._normalize_target(initial_message)
+            if target and parsed_date and parsed_time:
+                session.data["appointment_area"] = target
+                return self._save_request(sender_mobile, session, parsed_date, parsed_time)
             session.step = ConversationStep.APPOINTMENT_AREA
             self.session_registry.save(sender_mobile)
             return self._target_prompt(category)
@@ -43,8 +35,7 @@ class AppointmentService:
         session.step = ConversationStep.APPOINTMENT_CATEGORY
         self.session_registry.save(sender_mobile)
         return (
-            "📅 Appointment booking ప్రారంభిద్దాం.\n\n"
-            "ఏది కావాలి?\n"
+            "📅 Appointment booking ప్రారంభిద్దాం.\n\nఏది కావాలి?\n"
             "1. Doctor\n2. Hospital/Clinic\n3. Salon\n4. Beauty Parlour\n5. Other"
         )
 
@@ -56,11 +47,13 @@ class AppointmentService:
         if session.step == ConversationStep.APPOINTMENT_CATEGORY:
             category = self.CATEGORY_ALIASES.get(normalized) or self._category_from_free_text(text)
             if category is None:
-                return (
-                    "Appointment type చెప్పండి: Doctor, Hospital/Clinic, "
-                    "Salon, Beauty Parlour లేదా Other."
-                )
+                return "Appointment type చెప్పండి: Doctor, Hospital/Clinic, Salon, Beauty Parlour లేదా Other."
             session.data["appointment_category"] = category
+            parsed_date, parsed_time = self._extract_schedule(text)
+            target = self._normalize_target(text)
+            if target and parsed_date and parsed_time:
+                session.data["appointment_area"] = target
+                return self._save_request(sender_mobile, session, parsed_date, parsed_time)
             session.step = ConversationStep.APPOINTMENT_AREA
             self.session_registry.save(sender_mobile)
             return self._target_prompt(category)
@@ -68,12 +61,10 @@ class AppointmentService:
         if session.step == ConversationStep.APPOINTMENT_AREA:
             if len(text) < 2:
                 return self._target_prompt(session.data.get("appointment_category", "Appointment"))
-
             session.data["appointment_area"] = self._normalize_target(text)
             parsed_date, parsed_time = self._extract_schedule(text)
             if parsed_date and parsed_time:
                 return self._save_request(sender_mobile, session, parsed_date, parsed_time)
-
             session.step = ConversationStep.APPOINTMENT_DATE
             self.session_registry.save(sender_mobile)
             return "ఏ రోజు + ఏ సమయం కావాలో ఒకేసారి చెప్పండి. ఉదా: Tomorrow 4 PM."
@@ -84,7 +75,6 @@ class AppointmentService:
             parsed_date, parsed_time = self._extract_schedule(text)
             if parsed_date and parsed_time:
                 return self._save_request(sender_mobile, session, parsed_date, parsed_time)
-
             session.data["appointment_date"] = parsed_date or text
             session.step = ConversationStep.APPOINTMENT_TIME
             self.session_registry.save(sender_mobile)
@@ -93,13 +83,7 @@ class AppointmentService:
         if session.step == ConversationStep.APPOINTMENT_TIME:
             if len(text) < 2:
                 return "Preferred time చెప్పండి."
-            return self._save_request(
-                sender_mobile,
-                session,
-                session.data.get("appointment_date", "Today"),
-                text,
-            )
-
+            return self._save_request(sender_mobile, session, session.data.get("appointment_date", "Today"), text)
         return None
 
     def _save_request(self, sender_mobile: str, session, preferred_date: str, preferred_time: str) -> str:
@@ -115,28 +99,23 @@ class AppointmentService:
         self.session_registry.save(sender_mobile)
         return (
             "✅ Appointment request save అయింది.\n\n"
-            f"Request ID: #{request['id']}\n"
-            f"Type: {request['category']}\n"
-            f"Place: {request['area']}\n"
-            f"Date: {request['preferred_date']}\n"
-            f"Time: {request['preferred_time']}"
+            f"Request ID: #{request['id']}\nType: {request['category']}\n"
+            f"Place: {request['area']}\nDate: {request['preferred_date']}\nTime: {request['preferred_time']}"
         )
 
     @classmethod
     def _category_from_free_text(cls, text: str) -> str | None:
         lowered = str(text or "").lower()
         for alias, category in cls.CATEGORY_ALIASES.items():
-            if alias.isdigit():
-                continue
-            if alias in lowered:
+            if not alias.isdigit() and alias in lowered:
                 return category
         return None
 
     @staticmethod
     def _target_prompt(category: str) -> str:
         return (
-            f"✅ {category}. ఎక్కడ కావాలి? Nearby / area పేరు / specific {category} పేరు చెప్పండి. "
-            "అదే messageలో రోజు + సమయం కూడా చెప్పొచ్చు. ఉదా: Vuyyuru, Tomorrow 4 PM."
+            f"✅ {category}. Nearby / area పేరు / specific {category} పేరు చెప్పండి. "
+            "రోజు + సమయం కూడా అదే messageలో చెప్పండి. ఉదా: Vuyyuru, Tomorrow 4 PM."
         )
 
     @staticmethod
@@ -144,15 +123,12 @@ class AppointmentService:
         lowered = text.lower()
         if any(word in lowered for word in ("nearby", "near me", "దగ్గరలో", "నా దగ్గర", "చుట్టుపక్కల")):
             return "Nearby"
-        # Keep the user's exact area/business phrase; later discovery can decide
-        # whether it is a locality or a specific business name.
-        schedule_tokens = re.split(
-            r"\b(?:today|tomorrow|ఈరోజు|రేపు)\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b",
-            text,
-            flags=re.IGNORECASE,
-        )
-        target = schedule_tokens[0].strip(" ,.-") if schedule_tokens else text
-        return target or text
+        cleaned = re.sub(r"\b(?:today|tomorrow|ఈరోజు|రేపు|ఇవాళ)\b", " ", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b", " ", cleaned)
+        cleaned = re.sub(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b(?:appointment|booking|book|కావాలి|అపాయింట్మెంట్)\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = " ".join(cleaned.split()).strip(" ,.-")
+        return cleaned or "Nearby"
 
     @staticmethod
     def _extract_schedule(text: str) -> tuple[str | None, str | None]:
@@ -170,16 +146,7 @@ class AppointmentService:
         time_match = re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text, flags=re.IGNORECASE)
         preferred_time = time_match.group(0).upper() if time_match else None
         if preferred_time is None:
-            for marker, label in (
-                ("morning", "Morning"),
-                ("ఉదయం", "Morning"),
-                ("afternoon", "Afternoon"),
-                ("మధ్యాహ్నం", "Afternoon"),
-                ("evening", "Evening"),
-                ("సాయంత్రం", "Evening"),
-                ("night", "Night"),
-                ("రాత్రి", "Night"),
-            ):
+            for marker, label in (("morning", "Morning"), ("ఉదయం", "Morning"), ("afternoon", "Afternoon"), ("మధ్యాహ్నం", "Afternoon"), ("evening", "Evening"), ("సాయంత్రం", "Evening"), ("night", "Night"), ("రాత్రి", "Night")):
                 if marker in lowered:
                     preferred_time = label
                     break
