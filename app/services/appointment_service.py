@@ -1,3 +1,5 @@
+import re
+
 from app.models.session import ConversationStep
 
 
@@ -27,9 +29,17 @@ class AppointmentService:
         self.repository = repository
         self.session_registry = session_registry
 
-    def start(self, sender_mobile: str) -> str:
+    def start(self, sender_mobile: str, initial_message: str = "") -> str:
         session = self.session_registry.get(sender_mobile)
         session.data.clear()
+
+        category = self._category_from_free_text(initial_message)
+        if category:
+            session.data["appointment_category"] = category
+            session.step = ConversationStep.APPOINTMENT_AREA
+            self.session_registry.save(sender_mobile)
+            return self._target_prompt(category)
+
         session.step = ConversationStep.APPOINTMENT_CATEGORY
         self.session_registry.save(sender_mobile)
         return (
@@ -44,54 +54,133 @@ class AppointmentService:
         normalized = text.lower()
 
         if session.step == ConversationStep.APPOINTMENT_CATEGORY:
-            category = self.CATEGORY_ALIASES.get(normalized)
+            category = self.CATEGORY_ALIASES.get(normalized) or self._category_from_free_text(text)
             if category is None:
                 return (
-                    "దయచేసి appointment type చెప్పండి: Doctor, Hospital/Clinic, "
+                    "Appointment type చెప్పండి: Doctor, Hospital/Clinic, "
                     "Salon, Beauty Parlour లేదా Other."
                 )
             session.data["appointment_category"] = category
             session.step = ConversationStep.APPOINTMENT_AREA
             self.session_registry.save(sender_mobile)
-            return f"✅ {category}. ఇప్పుడు మీ area / locality పేరు చెప్పండి."
+            return self._target_prompt(category)
 
         if session.step == ConversationStep.APPOINTMENT_AREA:
             if len(text) < 2:
-                return "దయచేసి మీ area లేదా locality పేరు చెప్పండి."
-            session.data["appointment_area"] = text
+                return self._target_prompt(session.data.get("appointment_category", "Appointment"))
+
+            session.data["appointment_area"] = self._normalize_target(text)
+            parsed_date, parsed_time = self._extract_schedule(text)
+            if parsed_date and parsed_time:
+                return self._save_request(sender_mobile, session, parsed_date, parsed_time)
+
             session.step = ConversationStep.APPOINTMENT_DATE
             self.session_registry.save(sender_mobile)
-            return "ఏ రోజు appointment కావాలి? ఉదాహరణ: Today, Tomorrow లేదా 15-08-2026."
+            return "ఏ రోజు + ఏ సమయం కావాలో ఒకేసారి చెప్పండి. ఉదా: Tomorrow 4 PM."
 
         if session.step == ConversationStep.APPOINTMENT_DATE:
             if len(text) < 2:
-                return "దయచేసి appointment date చెప్పండి."
-            session.data["appointment_date"] = text
+                return "రోజు + సమయం ఒకేసారి చెప్పండి. ఉదా: Tomorrow 4 PM."
+            parsed_date, parsed_time = self._extract_schedule(text)
+            if parsed_date and parsed_time:
+                return self._save_request(sender_mobile, session, parsed_date, parsed_time)
+
+            session.data["appointment_date"] = parsed_date or text
             session.step = ConversationStep.APPOINTMENT_TIME
             self.session_registry.save(sender_mobile)
-            return "ఏ సమయం కావాలి? ఉదాహరణ: 10 AM, 4:30 PM లేదా Evening."
+            return "సమయం మాత్రమే చెప్పండి. ఉదా: 10 AM లేదా 4:30 PM."
 
         if session.step == ConversationStep.APPOINTMENT_TIME:
             if len(text) < 2:
-                return "దయచేసి preferred time చెప్పండి."
-            request = self.repository.create_request(
-                customer_mobile=sender_mobile,
-                category=session.data.get("appointment_category", "Other"),
-                area=session.data.get("appointment_area", ""),
-                preferred_date=session.data.get("appointment_date", ""),
-                preferred_time=text,
-            )
-            session.step = ConversationStep.MAIN_MENU
-            session.data.clear()
-            self.session_registry.save(sender_mobile)
-            return (
-                "✅ Appointment request save అయింది.\n\n"
-                f"Request ID: #{request['id']}\n"
-                f"Type: {request['category']}\n"
-                f"Area: {request['area']}\n"
-                f"Date: {request['preferred_date']}\n"
-                f"Time: {request['preferred_time']}\n\n"
-                "Next versionలో nearby businesses + available slotsతో direct confirmation వస్తుంది."
+                return "Preferred time చెప్పండి."
+            return self._save_request(
+                sender_mobile,
+                session,
+                session.data.get("appointment_date", "Today"),
+                text,
             )
 
         return None
+
+    def _save_request(self, sender_mobile: str, session, preferred_date: str, preferred_time: str) -> str:
+        request = self.repository.create_request(
+            customer_mobile=sender_mobile,
+            category=session.data.get("appointment_category", "Other"),
+            area=session.data.get("appointment_area", "Nearby"),
+            preferred_date=preferred_date,
+            preferred_time=preferred_time,
+        )
+        session.step = ConversationStep.MAIN_MENU
+        session.data.clear()
+        self.session_registry.save(sender_mobile)
+        return (
+            "✅ Appointment request save అయింది.\n\n"
+            f"Request ID: #{request['id']}\n"
+            f"Type: {request['category']}\n"
+            f"Place: {request['area']}\n"
+            f"Date: {request['preferred_date']}\n"
+            f"Time: {request['preferred_time']}"
+        )
+
+    @classmethod
+    def _category_from_free_text(cls, text: str) -> str | None:
+        lowered = str(text or "").lower()
+        for alias, category in cls.CATEGORY_ALIASES.items():
+            if alias.isdigit():
+                continue
+            if alias in lowered:
+                return category
+        return None
+
+    @staticmethod
+    def _target_prompt(category: str) -> str:
+        return (
+            f"✅ {category}. ఎక్కడ కావాలి? Nearby / area పేరు / specific {category} పేరు చెప్పండి. "
+            "అదే messageలో రోజు + సమయం కూడా చెప్పొచ్చు. ఉదా: Vuyyuru, Tomorrow 4 PM."
+        )
+
+    @staticmethod
+    def _normalize_target(text: str) -> str:
+        lowered = text.lower()
+        if any(word in lowered for word in ("nearby", "near me", "దగ్గరలో", "నా దగ్గర", "చుట్టుపక్కల")):
+            return "Nearby"
+        # Keep the user's exact area/business phrase; later discovery can decide
+        # whether it is a locality or a specific business name.
+        schedule_tokens = re.split(
+            r"\b(?:today|tomorrow|ఈరోజు|రేపు)\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        target = schedule_tokens[0].strip(" ,.-") if schedule_tokens else text
+        return target or text
+
+    @staticmethod
+    def _extract_schedule(text: str) -> tuple[str | None, str | None]:
+        lowered = text.lower()
+        preferred_date = None
+        if "tomorrow" in lowered or "రేపు" in lowered:
+            preferred_date = "Tomorrow"
+        elif "today" in lowered or "ఈరోజు" in lowered or "ఇవాళ" in lowered:
+            preferred_date = "Today"
+        else:
+            date_match = re.search(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b", text)
+            if date_match:
+                preferred_date = date_match.group(0)
+
+        time_match = re.search(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", text, flags=re.IGNORECASE)
+        preferred_time = time_match.group(0).upper() if time_match else None
+        if preferred_time is None:
+            for marker, label in (
+                ("morning", "Morning"),
+                ("ఉదయం", "Morning"),
+                ("afternoon", "Afternoon"),
+                ("మధ్యాహ్నం", "Afternoon"),
+                ("evening", "Evening"),
+                ("సాయంత్రం", "Evening"),
+                ("night", "Night"),
+                ("రాత్రి", "Night"),
+            ):
+                if marker in lowered:
+                    preferred_time = label
+                    break
+        return preferred_date, preferred_time
