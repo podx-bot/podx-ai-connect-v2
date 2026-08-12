@@ -6,6 +6,10 @@ from google.genai import types
 from app.services.retrying_voice_assistant_service import RetryingVoiceAssistantService
 
 
+def _voice_diag(message: str) -> None:
+    print(f"VOICE TRANSCRIPTION PATH: {message}", flush=True)
+
+
 class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
     """Fast voice transcription with normalized WAV + generateContent fallbacks."""
 
@@ -15,6 +19,11 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
 
     def transcribe(self, audio_bytes: bytes, mime_type: Optional[str]) -> dict[str, Any]:
         direct = super().transcribe(audio_bytes=audio_bytes, mime_type=mime_type)
+        _voice_diag(
+            f"stage=direct success={bool(direct.get('success'))} "
+            f"status={direct.get('status')} http={direct.get('http_status')} "
+            f"bytes={len(audio_bytes or b'')} mime={mime_type}"
+        )
         if direct.get("success"):
             return direct
 
@@ -22,11 +31,23 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
         normalized = None
         if self.audio_codec_service is not None:
             normalized = self.audio_codec_service.audio_to_wav(audio_bytes)
+            _voice_diag(
+                f"stage=normalize success={bool(normalized.get('success'))} "
+                f"status={normalized.get('status')} "
+                f"wav_bytes={len(normalized.get('content') or b'')}"
+            )
+        else:
+            _voice_diag("stage=normalize success=False status=NO_CODEC")
 
         if normalized and normalized.get("success"):
             normalized_fallback = self._transcribe_generate_content(
                 audio_bytes=normalized["content"],
                 mime_type="audio/wav",
+            )
+            _voice_diag(
+                f"stage=normalized_generate_content success={bool(normalized_fallback.get('success'))} "
+                f"status={normalized_fallback.get('status')} "
+                f"error={normalized_fallback.get('error')}"
             )
             if normalized_fallback.get("success"):
                 result = dict(normalized_fallback)
@@ -34,13 +55,14 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
                 result["direct_status"] = direct.get("status")
                 return result
 
-            # Short WhatsApp notes can occasionally survive better in the
-            # original OGG/Opus container than after WAV normalization. If the
-            # independent normalized path still cannot produce a transcript,
-            # try the original bytes once before returning a user-facing error.
             original_fallback = self._transcribe_generate_content(
                 audio_bytes=audio_bytes,
                 mime_type=original_mime_type,
+            )
+            _voice_diag(
+                f"stage=original_generate_content_after_wav success={bool(original_fallback.get('success'))} "
+                f"status={original_fallback.get('status')} "
+                f"error={original_fallback.get('error')}"
             )
             result = dict(original_fallback)
             result["normalized_fallback"] = False
@@ -52,6 +74,10 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
         fallback = self._transcribe_generate_content(
             audio_bytes=audio_bytes,
             mime_type=original_mime_type,
+        )
+        _voice_diag(
+            f"stage=original_generate_content_no_wav success={bool(fallback.get('success'))} "
+            f"status={fallback.get('status')} error={fallback.get('error')}"
         )
         result = dict(fallback)
         result["normalized_fallback"] = False
