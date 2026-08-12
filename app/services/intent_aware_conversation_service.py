@@ -27,6 +27,11 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.EMPLOYER_SERVICE,
     }
 
+    APPOINTMENT_INTERRUPT_INTENTS = {
+        "JOB_SEEKER",
+        "EMPLOYER",
+    }
+
     def __init__(
         self,
         user_repository,
@@ -50,6 +55,19 @@ class IntentAwareConversationService(ConversationService):
         )
 
         if self.appointment_service and session.step in self.APPOINTMENT_STEPS:
+            # Active appointment fields must not consume an obvious cross-module
+            # request such as "నాకు పని కావాలి" as a date/time/place value.
+            # Use keyword rules only here so normal appointment replies like
+            # "4 PM" never trigger an extra Gemini intent-classification call.
+            rule_classifier = getattr(self.intent_router, "_classify_rules", None)
+            interrupt_intent = rule_classifier(clean_message) if callable(rule_classifier) else None
+            if registered and interrupt_intent in self.APPOINTMENT_INTERRUPT_INTENTS:
+                session.step = ConversationStep.MAIN_MENU
+                session.data.clear()
+                self.session_registry.save(sender_mobile)
+                routed_command = self.ROUTED_COMMANDS[interrupt_intent]
+                return super().process(sender_mobile, routed_command)
+
             appointment_reply = self.appointment_service.process(
                 sender_mobile,
                 clean_message,
