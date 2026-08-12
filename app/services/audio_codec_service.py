@@ -5,7 +5,54 @@ import imageio_ffmpeg
 
 
 class AudioCodecService:
-    """Convert Gemini 24 kHz mono PCM into WhatsApp voice-note OGG/Opus."""
+    """Convert audio formats used by Gemini and WhatsApp."""
+
+    @staticmethod
+    def _ffmpeg_exe() -> str:
+        return imageio_ffmpeg.get_ffmpeg_exe()
+
+    def audio_to_wav(self, audio_bytes: bytes) -> dict[str, Any]:
+        """Normalize WhatsApp OGG/Opus (or other decodable audio) to mono 16 kHz WAV."""
+        if not audio_bytes:
+            return {"success": False, "status": "EMPTY_AUDIO"}
+        try:
+            process = subprocess.run(
+                [
+                    self._ffmpeg_exe(),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    "pipe:0",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-f",
+                    "wav",
+                    "pipe:1",
+                ],
+                input=audio_bytes,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            return {"success": False, "status": "FFMPEG_NORMALIZE_TIMEOUT"}
+        except Exception as error:
+            return {"success": False, "status": "FFMPEG_NORMALIZE_START_ERROR", "error": str(error)}
+
+        if process.returncode != 0:
+            return {
+                "success": False,
+                "status": "FFMPEG_NORMALIZE_ERROR",
+                "error": process.stderr.decode("utf-8", errors="replace")[-1000:],
+            }
+        output = bytes(process.stdout)
+        if not output:
+            return {"success": False, "status": "EMPTY_WAV"}
+        return {"success": True, "status": "NORMALIZED", "content": output, "mime_type": "audio/wav"}
 
     def pcm_to_ogg_opus(
         self,
@@ -17,9 +64,8 @@ class AudioCodecService:
             return {"success": False, "status": "EMPTY_PCM"}
 
         try:
-            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
             command = [
-                ffmpeg_exe,
+                self._ffmpeg_exe(),
                 "-hide_banner",
                 "-loglevel",
                 "error",
