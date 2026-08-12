@@ -7,7 +7,7 @@ from app.services.retrying_voice_assistant_service import RetryingVoiceAssistant
 
 
 class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
-    """Fast voice transcription with normalized WAV + generateContent fallback."""
+    """Fast voice transcription with normalized WAV + generateContent fallbacks."""
 
     def __init__(self, *args, audio_codec_service=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -18,30 +18,47 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
         if direct.get("success"):
             return direct
 
+        original_mime_type = self._normalize_mime_type(mime_type)
         normalized = None
         if self.audio_codec_service is not None:
             normalized = self.audio_codec_service.audio_to_wav(audio_bytes)
 
         if normalized and normalized.get("success"):
-            fallback = self._transcribe_generate_content(
+            normalized_fallback = self._transcribe_generate_content(
                 audio_bytes=normalized["content"],
                 mime_type="audio/wav",
             )
-            fallback = dict(fallback)
-            fallback["normalized_fallback"] = True
-            fallback["direct_status"] = direct.get("status")
-            return fallback
+            if normalized_fallback.get("success"):
+                result = dict(normalized_fallback)
+                result["normalized_fallback"] = True
+                result["direct_status"] = direct.get("status")
+                return result
+
+            # Short WhatsApp notes can occasionally survive better in the
+            # original OGG/Opus container than after WAV normalization. If the
+            # independent normalized path still cannot produce a transcript,
+            # try the original bytes once before returning a user-facing error.
+            original_fallback = self._transcribe_generate_content(
+                audio_bytes=audio_bytes,
+                mime_type=original_mime_type,
+            )
+            result = dict(original_fallback)
+            result["normalized_fallback"] = False
+            result["secondary_original_fallback"] = True
+            result["direct_status"] = direct.get("status")
+            result["normalized_status"] = normalized_fallback.get("status")
+            return result
 
         fallback = self._transcribe_generate_content(
             audio_bytes=audio_bytes,
-            mime_type=self._normalize_mime_type(mime_type),
+            mime_type=original_mime_type,
         )
-        fallback = dict(fallback)
-        fallback["normalized_fallback"] = False
-        fallback["direct_status"] = direct.get("status")
+        result = dict(fallback)
+        result["normalized_fallback"] = False
+        result["direct_status"] = direct.get("status")
         if normalized:
-            fallback["normalization_status"] = normalized.get("status")
-        return fallback
+            result["normalization_status"] = normalized.get("status")
+        return result
 
     def _transcribe_generate_content(self, audio_bytes: bytes, mime_type: str) -> dict[str, Any]:
         if not self.is_configured():
@@ -51,10 +68,12 @@ class NormalizedVoiceAssistantService(RetryingVoiceAssistantService):
 
         prompt = (
             "This is a WhatsApp voice note from an Indian user. Telugu is the primary expected language. "
-            "Accurately transcribe the spoken words. If the speaker uses Telugu, write the transcript in Telugu script. "
+            "Accurately transcribe every audible spoken word. The utterance may be extremely short, including only one word, a number, yes/no, or a time such as 4:30 PM. "
+            "Do not treat a short utterance as silence when speech is audible. "
+            "If the speaker uses Telugu, write the transcript in Telugu script. "
             "If the speaker mixes Telugu with English words such as Salon, Doctor, Today, Tomorrow, AM or PM, preserve those clear English words naturally. "
             "Also support Hindi or English when they are actually spoken. Preserve the user's exact meaning. "
-            "Do not translate, explain, summarize, correct the request, or add labels. "
+            "Do not translate, explain, summarize, correct the request, infer missing words, or add labels. "
             "Return only the transcription text."
         )
         try:
