@@ -6,8 +6,9 @@ from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.audio_codec_service import AudioCodecService
-from app.services.conversation_service import ConversationService
 from app.services.easy_job_command_service import EasyJobCommandService
+from app.services.intent_aware_conversation_service import IntentAwareConversationService
+from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.session_registry import SessionRegistry
@@ -28,9 +29,14 @@ class AppContainer:
         self.job_lifecycle_repository = JobLifecycleRepository(self.database)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
-        self.conversation_service = ConversationService(
+        self.intent_router_service = IntentRouterService(
+            api_key=self.settings.gemini_api_key,
+            model=self.settings.gemini_voice_model,
+        )
+        self.conversation_service = IntentAwareConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry,
+            intent_router=self.intent_router_service,
         )
 
         self.whatsapp_service = WhatsAppService(
