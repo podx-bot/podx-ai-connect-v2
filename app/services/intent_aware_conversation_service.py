@@ -20,9 +20,6 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.APPOINTMENT_TIME,
     }
 
-    # These are still early, menu-like job states. A strong new intent such as
-    # "salon appointment కావాలి" should be allowed to leave them instead of being
-    # treated as an invalid job category/service choice.
     INTENT_SWITCH_STEPS = {
         ConversationStep.START,
         ConversationStep.MAIN_MENU,
@@ -66,14 +63,12 @@ class IntentAwareConversationService(ConversationService):
             classification = self.intent_router.classify(clean_message)
             intent = classification.get("intent", "UNKNOWN")
 
-            # Cross-module intent switching is intentionally conservative: only a
-            # clearly recognized appointment intent may interrupt an early job menu.
-            # Normal job menu choices still fall through to the existing workflow.
             if intent == "APPOINTMENT" and self.appointment_service:
-                return self.appointment_service.start(sender_mobile)
+                return self.appointment_service.start(
+                    sender_mobile,
+                    initial_message=clean_message,
+                )
 
-            # Existing command routing is allowed only from the conversational home,
-            # so a category choice like "1" inside a job flow is never hijacked.
             if session.step in {ConversationStep.START, ConversationStep.MAIN_MENU}:
                 routed_command = self.ROUTED_COMMANDS.get(intent)
                 if routed_command:
