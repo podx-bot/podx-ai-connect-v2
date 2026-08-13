@@ -25,12 +25,22 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.START,
         ConversationStep.MAIN_MENU,
         ConversationStep.WORKER_CATEGORY,
+        ConversationStep.WORKER_EXPERIENCE,
+        ConversationStep.WORKER_AVAILABILITY,
         ConversationStep.EMPLOYER_SERVICE,
     }
 
     APPOINTMENT_INTERRUPT_INTENTS = {
         "JOB_SEEKER",
         "EMPLOYER",
+    }
+
+    CLEAR_MENU_INTERRUPT_INTENTS = {
+        "JOB_SEEKER",
+        "EMPLOYER",
+        "APPOINTMENT",
+        "SERVICE",
+        "SHOP_PRODUCT",
     }
 
     SMART_WORKER_STEPS = {
@@ -59,6 +69,52 @@ class IntentAwareConversationService(ConversationService):
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
         registered = bool(existing_user and existing_user.get("registration_complete") == 1)
 
+        rule_classifier = getattr(self.intent_router, "_classify_rules", None)
+        rule_intent = rule_classifier(clean_message) if registered and callable(rule_classifier) else None
+
+        # A clear new request is allowed to leave stale worker/employer menus.
+        # Only deterministic rule matches interrupt; unknown text and normal
+        # numeric/form answers stay inside the active workflow.
+        if (
+            registered
+            and session.step in self.INTENT_SWITCH_STEPS
+            and session.step not in {ConversationStep.START, ConversationStep.MAIN_MENU}
+            and rule_intent in self.CLEAR_MENU_INTERRUPT_INTENTS
+        ):
+            if rule_intent == "APPOINTMENT" and self.appointment_service:
+                session.data.clear()
+                return self.appointment_service.start(sender_mobile, initial_message=clean_message)
+            if rule_intent in {"JOB_SEEKER", "EMPLOYER"}:
+                return self._route_smart_job(sender_mobile, clean_message, rule_intent)
+            if rule_intent == "SERVICE":
+                session.data.clear()
+                session.step = ConversationStep.MAIN_MENU
+                self._record_capability(sender_mobile, "SERVICE_CUSTOMER")
+                self._capture_unresolved_demand(
+                    sender_mobile=sender_mobile,
+                    intent=rule_intent,
+                    message=clean_message,
+                    existing_user=existing_user,
+                )
+                return self._reply(
+                    sender_mobile,
+                    "🛠️ Service request save చేశాను. Provider match దొరికినప్పుడు PODX connect చేస్తుంది.",
+                )
+            if rule_intent == "SHOP_PRODUCT":
+                session.data.clear()
+                session.step = ConversationStep.MAIN_MENU
+                self._record_capability(sender_mobile, "BUYER")
+                self._capture_unresolved_demand(
+                    sender_mobile=sender_mobile,
+                    intent=rule_intent,
+                    message=clean_message,
+                    existing_user=existing_user,
+                )
+                return self._reply(
+                    sender_mobile,
+                    "🛍️ Product request save చేశాను. Seller/stock match దొరికినప్పుడు PODX connect చేస్తుంది.",
+                )
+
         if registered and session.data.get("smart_prefill"):
             if session.step in self.SMART_WORKER_STEPS:
                 smart_reply = self._continue_smart_worker(sender_mobile, clean_message)
@@ -70,8 +126,7 @@ class IntentAwareConversationService(ConversationService):
                     return smart_reply
 
         if self.appointment_service and session.step in self.APPOINTMENT_STEPS:
-            rule_classifier = getattr(self.intent_router, "_classify_rules", None)
-            interrupt_intent = rule_classifier(clean_message) if callable(rule_classifier) else None
+            interrupt_intent = rule_intent
             if registered and interrupt_intent in self.APPOINTMENT_INTERRUPT_INTENTS:
                 return self._route_smart_job(sender_mobile, clean_message, interrupt_intent)
             appointment_reply = self.appointment_service.process(sender_mobile, clean_message)
