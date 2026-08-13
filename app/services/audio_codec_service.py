@@ -1,4 +1,5 @@
 import subprocess
+import time
 from typing import Any
 
 import imageio_ffmpeg
@@ -63,6 +64,7 @@ class AudioCodecService:
         if not pcm_bytes:
             return {"success": False, "status": "EMPTY_PCM"}
 
+        started = time.perf_counter()
         try:
             command = [
                 self._ffmpeg_exe(),
@@ -98,25 +100,32 @@ class AudioCodecService:
                 timeout=30,
             )
         except subprocess.TimeoutExpired:
-            return {"success": False, "status": "FFMPEG_TIMEOUT"}
+            return {
+                "success": False,
+                "status": "FFMPEG_TIMEOUT",
+                "conversion_ms": round((time.perf_counter() - started) * 1000),
+            }
         except Exception as error:
             return {
                 "success": False,
                 "status": "FFMPEG_START_ERROR",
                 "error": str(error),
+                "conversion_ms": round((time.perf_counter() - started) * 1000),
             }
 
+        conversion_ms = round((time.perf_counter() - started) * 1000)
         if process.returncode != 0:
             return {
                 "success": False,
                 "status": "FFMPEG_CONVERSION_ERROR",
                 "return_code": process.returncode,
                 "error": process.stderr.decode("utf-8", errors="replace")[-1000:],
+                "conversion_ms": conversion_ms,
             }
 
         output = bytes(process.stdout)
         if not output:
-            return {"success": False, "status": "EMPTY_OGG"}
+            return {"success": False, "status": "EMPTY_OGG", "conversion_ms": conversion_ms}
 
         return {
             "success": True,
@@ -124,4 +133,5 @@ class AudioCodecService:
             "content": output,
             "mime_type": "audio/ogg",
             "file_name": "podx-reply.ogg",
+            "conversion_ms": conversion_ms,
         }
