@@ -119,30 +119,35 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         total_bytes = 0
 
         try:
-            with httpx.Client(timeout=timeout) as client:
-                with client.stream("POST", self.TTS_URL, headers=headers, json=payload) as response:
-                    if response.status_code != 200:
-                        error_preview = response.read()[:300].decode("utf-8", errors="replace")
+            with self._sarvam_http_client.stream(
+                "POST",
+                self.TTS_URL,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            ) as response:
+                if response.status_code != 200:
+                    error_preview = response.read()[:300].decode("utf-8", errors="replace")
+                    return {
+                        "success": False,
+                        "status": f"SARVAM_TTS_HTTP_{response.status_code}",
+                        "error_type": "HTTPStatusError",
+                        "error": error_preview,
+                    }
+
+                for chunk in response.iter_bytes():
+                    if not chunk:
+                        continue
+                    if first_byte_ms is None:
+                        first_byte_ms = round((time.perf_counter() - started) * 1000)
+                    total_bytes += len(chunk)
+                    if total_bytes > self.TTS_MAX_PCM_BYTES:
                         return {
                             "success": False,
-                            "status": f"SARVAM_TTS_HTTP_{response.status_code}",
-                            "error_type": "HTTPStatusError",
-                            "error": error_preview,
+                            "status": "SARVAM_TTS_AUDIO_TOO_LARGE",
+                            "error_type": "AudioSizeError",
                         }
-
-                    for chunk in response.iter_bytes():
-                        if not chunk:
-                            continue
-                        if first_byte_ms is None:
-                            first_byte_ms = round((time.perf_counter() - started) * 1000)
-                        total_bytes += len(chunk)
-                        if total_bytes > self.TTS_MAX_PCM_BYTES:
-                            return {
-                                "success": False,
-                                "status": "SARVAM_TTS_AUDIO_TOO_LARGE",
-                                "error_type": "AudioSizeError",
-                            }
-                        pcm_parts.append(chunk)
+                    pcm_parts.append(chunk)
 
             pcm_bytes = b"".join(pcm_parts)
             if not pcm_bytes:
@@ -153,7 +158,7 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
             print(
                 "VOICE TTS PATH: stage=sarvam_tts_http_stream success=True "
                 f"language={language_code} first_byte_ms={first_byte_ms or stream_ms} "
-                f"stream_ms={stream_ms} pcm_bytes={len(pcm_bytes)}",
+                f"stream_ms={stream_ms} pcm_bytes={len(pcm_bytes)} client_reused=True",
                 flush=True,
             )
             return self._success_result(
