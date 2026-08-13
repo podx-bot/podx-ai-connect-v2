@@ -20,6 +20,9 @@ class MarketplaceConversationService(RoleAwareConversationService):
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
         registered = bool(existing_user and existing_user.get("registration_complete") == 1)
 
+        if registered and normalized in self.ROLE_COMMANDS:
+            return super().process(sender_mobile, clean_message)
+
         if registered and session.step == ConversationStep.SELLER_PRODUCT_NAME:
             if len(clean_message) < 2:
                 return self._reply(sender_mobile, "మీరు అమ్మే product పేరు పంపండి.")
@@ -83,8 +86,17 @@ class MarketplaceConversationService(RoleAwareConversationService):
                 session.data["source_message"] = clean_message
                 session.step = ConversationStep.SERVICE_PROVIDER_NAME
                 return self._reply(sender_mobile, "🛠️ మీరు Service Providerగా add అవుతున్నారు.\n\nమీరు ఇచ్చే service పేరు పంపండి. ఉదాహరణ: Electrician, Plumbing, AC Repair.")
+            if intent == "UNKNOWN":
+                return self._reply(sender_mobile, self._clarification_prompt())
 
         return super().process(sender_mobile, clean_message)
+
+    @staticmethod
+    def _clarification_prompt() -> str:
+        return (
+            "🤔 మీ అవసరం పూర్తిగా అర్థం కాలేదు. ఇంకొంచెం స్పష్టంగా ఒక చిన్న వాక్యంలో చెప్పండి లేదా voice పంపండి.\n\n"
+            "ఉదా: Electrician కావాలి / Chicken కొనాలి / ఉద్యోగం కావాలి / workers కావాలి."
+        )
 
     @staticmethod
     def _main_menu() -> str:
