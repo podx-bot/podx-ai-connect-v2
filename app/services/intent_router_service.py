@@ -93,20 +93,25 @@ class IntentRouterService:
         if any(term in lowered for term in appointment_terms):
             return "APPOINTMENT"
 
-        employer_terms = (
-            "workers కావాలి", "worker కావాలి", "వర్కర్స్ కావాలి", "staff కావాలి",
-            "మనుషులు కావాలి", "need workers", "need staff", "hire workers",
-            "कर्मचारी चाहिए", "workers required",
-        )
-        if any(term in lowered for term in employer_terms):
-            return "EMPLOYER"
-
+        # Explicit requests for the user's own work win before worker-hiring
+        # phrases. This prevents "delivery boy పని కావాలి" from being mistaken
+        # for an employer request merely because it contains "delivery boy".
         job_terms = (
             "ఉద్యోగం కావాలి", "పని కావాలి", "జాబ్ కావాలి", "job కావాలి",
-            "need a job", "looking for job", "work కావాలి", "नौकरी चाहिए",
+            "need a job", "looking for job", "looking for work", "work కావాలి",
+            "నాకు పని", "నాకు జాబ్", "नौकरी चाहिए",
         )
         if any(term in lowered for term in job_terms):
             return "JOB_SEEKER"
+
+        employer_terms = (
+            "workers కావాలి", "worker కావాలి", "వర్కర్స్ కావాలి", "staff కావాలి",
+            "మనుషులు కావాలి", "need workers", "need staff", "hire workers",
+            "कर्मचारी चाहिए", "workers required", "delivery boy కావాలి",
+            "డెలివరీ బాయ్ కావాలి", "driver కావాలి", "డ్రైవర్ కావాలి",
+        )
+        if any(term in lowered for term in employer_terms):
+            return "EMPLOYER"
 
         service_terms = (
             "electrician", "ఎలక్ట్రిషియన్", "plumber", "ప్లంబర్", "ac repair",
