@@ -32,7 +32,7 @@ def test_retries_temporary_failure_then_succeeds(monkeypatch):
     def fake_post(*args, **kwargs):
         return responses.pop(0)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(service._http_client, "post", fake_post)
     result = service.send_text_message("919999999999", "Hi")
 
     assert result["success"] is True
@@ -48,7 +48,7 @@ def test_does_not_retry_permanent_http_error(monkeypatch):
         calls["count"] += 1
         return httpx.Response(400, json={"error": {"message": "bad request"}})
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(service._http_client, "post", fake_post)
     result = service.send_text_message("919999999999", "Hi")
 
     assert result["success"] is False
@@ -65,7 +65,7 @@ def test_stops_after_max_attempts_on_timeout(monkeypatch):
         calls["count"] += 1
         raise httpx.TimeoutException("timeout")
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(service._http_client, "post", fake_post)
     result = service.send_text_message("919999999999", "Hi")
 
     assert result["success"] is False
@@ -84,7 +84,7 @@ def test_send_voice_bytes_uploads_then_sends_audio(monkeypatch):
             return httpx.Response(200, json={"id": "media-voice-1"})
         return httpx.Response(200, json={"messages": [{"id": "wamid.voice.ok"}]})
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(service._http_client, "post", fake_post)
     result = service.send_voice_bytes(
         recipient_mobile="919999999999",
         audio_bytes=b"fake-ogg-opus",
