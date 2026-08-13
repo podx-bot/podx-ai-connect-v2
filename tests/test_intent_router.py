@@ -20,7 +20,27 @@ def test_router_recognizes_appointment_future_module():
     assert result["intent"] == "APPOINTMENT"
 
 
-def test_router_recognizes_local_service_future_module():
+def test_router_recognizes_local_service_customer():
     router = IntentRouterService(api_key="")
     result = router.classify("nearby electrician కావాలి")
     assert result["intent"] == "SERVICE"
+
+
+def test_router_recognizes_product_seller():
+    router = IntentRouterService(api_key="")
+    result = router.classify("నేను products అమ్ముతాను")
+    assert result["intent"] == "SELL_PRODUCT"
+    assert result["source"] == "rules"
+
+
+def test_router_recognizes_service_provider_before_service_customer():
+    router = IntentRouterService(api_key="")
+    result = router.classify("నేను electrician service చేస్తాను")
+    assert result["intent"] == "SERVICE_PROVIDER"
+    assert result["source"] == "rules"
+
+
+def test_router_recognizes_product_buyer_separately_from_seller():
+    router = IntentRouterService(api_key="")
+    result = router.classify("నాకు product కొనాలి price ఎంత")
+    assert result["intent"] == "SHOP_PRODUCT"
