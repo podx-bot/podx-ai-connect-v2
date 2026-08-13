@@ -36,6 +36,18 @@ class FakeRouter:
         return IntentRouterService._classify_rules(message)
 
 
+class FlexibleRouter:
+    def classify(self, message):
+        intent = IntentRouterService._classify_rules(message)
+        if intent:
+            return {"intent": intent, "source": "rules", "confidence": 1.0}
+        return {"intent": "UNKNOWN", "source": "rules", "confidence": 0.0}
+
+    @staticmethod
+    def _classify_rules(message):
+        return IntentRouterService._classify_rules(message)
+
+
 class FakeAppointmentService:
     def __init__(self):
         self.started = []
@@ -133,3 +145,36 @@ def test_normal_appointment_time_does_not_leave_appointment_flow():
 
     assert result == "APPOINTMENT_CONTINUED"
     assert appointment_service.processed == [("9199", "4:30 PM")]
+
+
+def test_service_request_interrupts_stale_worker_category_menu():
+    session = FakeSession(step=ConversationStep.WORKER_CATEGORY, data={"role": "WORKER"})
+    registry = FakeRegistry(session)
+    service = IntentAwareConversationService(
+        user_repository=FakeUserRepository(),
+        session_registry=registry,
+        intent_router=FlexibleRouter(),
+    )
+
+    result = service.process("9199", "నాకు electrician కావాలి")
+
+    assert "Service request save" in result
+    assert session.step == ConversationStep.MAIN_MENU
+    assert session.data == {}
+    assert "Delivery" not in result
+
+
+def test_numeric_worker_answer_does_not_interrupt_active_worker_flow():
+    session = FakeSession(step=ConversationStep.WORKER_CATEGORY, data={"role": "WORKER"})
+    registry = FakeRegistry(session)
+    service = IntentAwareConversationService(
+        user_repository=FakeUserRepository(),
+        session_registry=registry,
+        intent_router=FlexibleRouter(),
+    )
+
+    result = service.process("9199", "8")
+
+    assert "Experience" in result
+    assert session.step == ConversationStep.WORKER_EXPERIENCE
+    assert session.data["category"] == "Electrician"
