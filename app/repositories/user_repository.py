@@ -2,11 +2,13 @@ import re
 from typing import Optional
 
 from app.database.database import Database
+from app.repositories.capability_repository import CapabilityRepository
 
 
 class UserRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
+        self.capability_repository = CapabilityRepository(database)
 
     def find_by_whatsapp_mobile(
         self,
@@ -20,7 +22,41 @@ class UserRepository:
             """,
             (whatsapp_mobile,)
         )
-        return dict(row) if row else None
+        if not row:
+            return None
+        user = dict(row)
+        user["capabilities"] = self.list_capabilities(whatsapp_mobile)
+        return user
+
+    def add_capability(
+        self,
+        whatsapp_mobile: str,
+        capability: str,
+        source: str | None = "conversation",
+    ) -> None:
+        self.capability_repository.add(
+            whatsapp_mobile,
+            capability,
+            source=source,
+        )
+
+    def add_capabilities(
+        self,
+        whatsapp_mobile: str,
+        capabilities,
+        source: str | None = "registration",
+    ) -> None:
+        self.capability_repository.add_many(
+            whatsapp_mobile,
+            capabilities,
+            source=source,
+        )
+
+    def list_capabilities(self, whatsapp_mobile: str) -> list[str]:
+        return self.capability_repository.list_for_user(whatsapp_mobile)
+
+    def has_capability(self, whatsapp_mobile: str, capability: str) -> bool:
+        return self.capability_repository.has(whatsapp_mobile, capability)
 
     def create_or_update_registration(
         self,
@@ -95,6 +131,7 @@ class UserRepository:
                 availability
             )
         )
+        self.add_capability(whatsapp_mobile, "WORKER", source="job_flow")
 
     def complete_worker_registration(
         self,
@@ -109,6 +146,7 @@ class UserRepository:
             """,
             (whatsapp_mobile,)
         )
+        self.add_capability(whatsapp_mobile, "WORKER", source="job_flow")
 
     def save_employer_post(
         self,
@@ -152,6 +190,7 @@ class UserRepository:
                 employer_contact
             )
         )
+        self.add_capability(whatsapp_mobile, "EMPLOYER", source="job_flow")
         return int(cursor.lastrowid)
 
     def save_employer_job_location(

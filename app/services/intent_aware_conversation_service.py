@@ -91,6 +91,7 @@ class IntentAwareConversationService(ConversationService):
                 if routed_command:
                     return super().process(sender_mobile, routed_command)
                 if intent == "SERVICE":
+                    self._record_capability(sender_mobile, "SERVICE_CUSTOMER")
                     self._capture_unresolved_demand(
                         sender_mobile=sender_mobile,
                         intent=intent,
@@ -102,6 +103,7 @@ class IntentAwareConversationService(ConversationService):
                         "🛠️ మీ local service request save చేశాను. ప్రస్తుతం direct match దొరకకపోతే PODX ఈ demandని track చేసి provider available అయినప్పుడు connect చేయగలదు.",
                     )
                 if intent == "SHOP_PRODUCT":
+                    self._record_capability(sender_mobile, "BUYER")
                     self._capture_unresolved_demand(
                         sender_mobile=sender_mobile,
                         intent=intent,
@@ -113,6 +115,11 @@ class IntentAwareConversationService(ConversationService):
                         "🛍️ మీ product request save చేశాను. ప్రస్తుతం local match దొరకకపోతే PODX ఈ demandని track చేసి seller/stock available అయినప్పుడు connect చేయగలదు.",
                     )
         return super().process(sender_mobile, clean_message)
+
+    def _record_capability(self, sender_mobile: str, capability: str) -> None:
+        add_capability = getattr(self.user_repository, "add_capability", None)
+        if callable(add_capability):
+            add_capability(sender_mobile, capability, source="conversation")
 
     def _capture_unresolved_demand(self, sender_mobile: str, intent: str, message: str, existing_user) -> None:
         if self.demand_capture_service is None:
@@ -134,6 +141,7 @@ class IntentAwareConversationService(ConversationService):
         session.data.clear()
 
         if intent == "JOB_SEEKER":
+            self._record_capability(sender_mobile, "WORKER")
             session.data["role"] = "WORKER"
             if details.get("category"):
                 session.data["category"] = details["category"]
@@ -145,6 +153,7 @@ class IntentAwareConversationService(ConversationService):
                 session.data["smart_prefill"] = True
             return self._next_worker_prompt_or_save(sender_mobile)
 
+        self._record_capability(sender_mobile, "EMPLOYER")
         session.data["role"] = "EMPLOYER"
         if details.get("category"):
             session.data["service"] = details["category"]
