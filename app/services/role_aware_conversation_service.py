@@ -1,0 +1,73 @@
+from app.models.session import ConversationStep
+from app.services.intent_aware_conversation_service import IntentAwareConversationService
+
+
+class RoleAwareConversationService(IntentAwareConversationService):
+    """Allow registered users to add PODX roles without re-registering."""
+
+    ROLE_COMMANDS = {
+        "roles",
+        "my roles",
+        "manage roles",
+        "add roles",
+        "change roles",
+        "నా roles",
+        "నా రోల్స్",
+        "roles మార్చాలి",
+        "రోల్స్ మార్చాలి",
+        "roles add చేయాలి",
+        "రోల్స్ యాడ్ చేయాలి",
+    }
+
+    def process(self, sender_mobile: str, message: str) -> str:
+        clean_message = str(message or "").strip()
+        normalized = clean_message.lower()
+        session = self.session_registry.get(sender_mobile)
+        existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
+        registered = bool(existing_user and existing_user.get("registration_complete") == 1)
+
+        if registered and normalized in self.ROLE_COMMANDS:
+            session.data.clear()
+            session.data["manage_roles"] = True
+            session.step = ConversationStep.WAITING_CAPABILITIES
+            current = existing_user.get("capabilities") or []
+            current_text = ", ".join(
+                self.CAPABILITY_LABELS.get(item, item) for item in current
+            ) or "None yet"
+            return self._reply(
+                sender_mobile,
+                f"⚙️ మీ current PODX roles: {current_text}\n\n"
+                "కొత్త roles add చేయడానికి ఒకటి లేదా ఎక్కువ options ఎంచుకోండి.\n"
+                "ఉదాహరణ: 1,2,4,5\n\n"
+                + self._capability_menu(),
+            )
+
+        if (
+            registered
+            and session.step == ConversationStep.WAITING_CAPABILITIES
+            and session.data.get("manage_roles")
+        ):
+            capabilities = self._parse_capabilities(clean_message)
+            if not capabilities:
+                return self._reply(
+                    sender_mobile,
+                    "ఒకటి లేదా ఎక్కువ valid options ఎంచుకోండి. ఉదాహరణ: 1,2 లేదా 4,5\n\n"
+                    + self._capability_menu(),
+                )
+            self.user_repository.add_capabilities(
+                sender_mobile,
+                capabilities,
+                source="profile_manage",
+            )
+            session.data.clear()
+            session.step = ConversationStep.MAIN_MENU
+            all_capabilities = self.user_repository.list_capabilities(sender_mobile)
+            selected = ", ".join(
+                self.CAPABILITY_LABELS.get(item, item) for item in all_capabilities
+            )
+            return self._reply(
+                sender_mobile,
+                f"✅ మీ PODX roles update అయ్యాయి: {selected}\n\n" + self._main_menu(),
+            )
+
+        return super().process(sender_mobile, clean_message)
