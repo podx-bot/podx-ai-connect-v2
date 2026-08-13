@@ -20,7 +20,9 @@ class IntentRouterService:
         "HELP",
         "APPOINTMENT",
         "SERVICE",
+        "SERVICE_PROVIDER",
         "SHOP_PRODUCT",
+        "SELL_PRODUCT",
         "GREETING",
         "UNKNOWN",
     }
@@ -45,10 +47,12 @@ class IntentRouterService:
             "Classify this PODX user request into exactly one intent. "
             "Return only one label, no punctuation or explanation.\n"
             "Labels: JOB_SEEKER, EMPLOYER, PROFILE, HELP, APPOINTMENT, SERVICE, "
-            "SHOP_PRODUCT, GREETING, UNKNOWN.\n"
+            "SERVICE_PROVIDER, SHOP_PRODUCT, SELL_PRODUCT, GREETING, UNKNOWN.\n"
             "JOB_SEEKER = user wants a job/work. EMPLOYER = user wants workers/staff. "
-            "APPOINTMENT = doctor/salon/clinic booking. SERVICE = electrician, repair, "
-            "cleaning or other local service. SHOP_PRODUCT = shop/product/price/buying. "
+            "APPOINTMENT = doctor/salon/clinic booking. SERVICE = user needs an electrician, "
+            "repair, cleaning or other local service. SERVICE_PROVIDER = user offers/provides "
+            "a local service. SHOP_PRODUCT = user wants to buy/find/check price or stock of a "
+            "product. SELL_PRODUCT = user sells/offers/has products for customers. "
             "Preserve meaning across Telugu, English, Hindi and mixed speech.\n\n"
             f"Request: {text}"
         )
@@ -113,16 +117,40 @@ class IntentRouterService:
         if any(term in lowered for term in employer_terms):
             return "EMPLOYER"
 
+        # Provider/seller rules intentionally run before customer/buyer rules.
+        # A phrase such as "నేను electrician service చేస్తాను" contains the word
+        # electrician but means the user provides the service, not needs it.
+        service_provider_terms = (
+            "service ఇస్తాను", "service చేస్తాను", "services ఇస్తాను", "services చేస్తాను",
+            "సర్వీస్ ఇస్తాను", "సర్వీస్ చేస్తాను", "సేవ ఇస్తాను", "సేవలు ఇస్తాను",
+            "నేను electrician", "నేను ఎలక్ట్రిషియన్", "నేను plumber", "నేను ప్లంబర్",
+            "i provide service", "i provide services", "i offer service", "service provider",
+            "काम करता हूँ", "सेवा देता हूँ",
+        )
+        if any(term in lowered for term in service_provider_terms):
+            return "SERVICE_PROVIDER"
+
+        seller_terms = (
+            "అమ్ముతాను", "అమ్ముతున్నాను", "అమ్మాలి", "విక్రయిస్తాను", "సేల్ చేస్తాను",
+            "నేను seller", "seller ని", "products అమ్ముతాను", "product అమ్ముతాను",
+            "i sell", "we sell", "selling products", "sell products", "seller",
+            "बेचता हूँ", "बेचती हूँ", "बेचना है",
+        )
+        if any(term in lowered for term in seller_terms):
+            return "SELL_PRODUCT"
+
         service_terms = (
             "electrician", "ఎలక్ట్రిషియన్", "plumber", "ప్లంబర్", "ac repair",
             "ac service", "cleaning service", "క్లీనింగ్ సర్వీస్", "repair person",
+            "service కావాలి", "సర్వీస్ కావాలి", "సేవ కావాలి", "need service",
         )
         if any(term in lowered for term in service_terms):
             return "SERVICE"
 
         product_terms = (
             "price ఎంత", "ధర ఎంత", "product కావాలి", "కొనాలి", "shop ఎక్కడ",
-            "nearby shop", "buy product", "price of", "दाम", "खरीदना",
+            "nearby shop", "buy product", "price of", "దొరుకుతుందా", "స్టాక్ ఉందా",
+            "stock ఉందా", "दाम", "खरीदना",
         )
         if any(term in lowered for term in product_terms):
             return "SHOP_PRODUCT"
