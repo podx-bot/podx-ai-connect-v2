@@ -11,12 +11,22 @@ from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoi
 
 
 class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
-    """Use Sarvam Bulbul v3 for TTS, preserving Gemini as the fallback."""
+    """Use Sarvam Bulbul v3 for TTS with a strict latency budget.
+
+    Gemini remains a compatibility fallback only for configuration/language cases.
+    Runtime Sarvam timeout/provider failures fail fast so a late voice response never
+    blocks or arrives tens of seconds after the already-delivered useful text reply.
+    """
 
     TTS_URL = "https://api.sarvam.ai/text-to-speech"
     TTS_MODEL = "bulbul:v3"
     TTS_SPEAKER = "shubh"
-    TTS_TIMEOUT_SECONDS = 5.0
+    TTS_TIMEOUT_SECONDS = 3.5
+
+    GEMINI_COMPATIBILITY_FALLBACK_STATUSES = {
+        "SARVAM_TTS_NOT_CONFIGURED",
+        "SARVAM_TTS_UNSUPPORTED_LANGUAGE",
+    }
 
     SCRIPT_LANGUAGES = (
         (0x0980, 0x09FF, "bn-IN"),
@@ -35,14 +45,28 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         if primary.get("success"):
             return primary
 
+        status = str(primary.get("status") or "SARVAM_TTS_ERROR")
+        if status not in self.GEMINI_COMPATIBILITY_FALLBACK_STATUSES:
+            print(
+                "VOICE TTS PATH: stage=sarvam_tts_fast_fail "
+                f"status={status} error_type={primary.get('error_type')} "
+                "gemini_fallback=False",
+                flush=True,
+            )
+            failed = dict(primary)
+            failed["tts_path"] = "sarvam_fast_fail"
+            failed["gemini_fallback"] = False
+            return failed
+
         print(
-            "VOICE TTS PATH: stage=sarvam_tts_fallback "
-            f"status={primary.get('status')} error_type={primary.get('error_type')}",
+            "VOICE TTS PATH: stage=sarvam_tts_compatibility_fallback "
+            f"status={status} error_type={primary.get('error_type')}",
             flush=True,
         )
         fallback = super().synthesize(text)
-        fallback["tts_path"] = "gemini_fallback"
-        fallback["sarvam_tts_status"] = primary.get("status")
+        fallback["tts_path"] = "gemini_compatibility_fallback"
+        fallback["sarvam_tts_status"] = status
+        fallback["gemini_fallback"] = True
         return fallback
 
     def _synthesize_sarvam(self, text: str) -> dict[str, Any]:
