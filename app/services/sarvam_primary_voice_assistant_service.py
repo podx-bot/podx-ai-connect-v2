@@ -16,6 +16,7 @@ class SarvamPrimaryVoiceAssistantService(FilesFallbackVoiceAssistantService):
     SARVAM_CONNECT_TIMEOUT_SECONDS = 2.5
     SARVAM_WRITE_TIMEOUT_SECONDS = 3.0
     SARVAM_POOL_TIMEOUT_SECONDS = 2.0
+    TRANSCRIPT_LOG_PREVIEW_CHARS = 160
 
     def __init__(
         self,
@@ -103,9 +104,11 @@ class SarvamPrimaryVoiceAssistantService(FilesFallbackVoiceAssistantService):
                     "success": False,
                     "status": "SARVAM_EMPTY_TRANSCRIPT",
                     "language_code": payload.get("language_code"),
+                    "language_probability": payload.get("language_probability"),
                     "request_ms": request_ms,
                 }
 
+            transcript_preview = self._transcript_log_preview(transcript)
             result = {
                 "success": True,
                 "status": "TRANSCRIBED_SARVAM",
@@ -116,11 +119,15 @@ class SarvamPrimaryVoiceAssistantService(FilesFallbackVoiceAssistantService):
                 "language_probability": payload.get("language_probability"),
                 "transcription_path": "sarvam_primary",
                 "request_ms": request_ms,
+                "transcript_chars": len(transcript),
             }
             _voice_diag(
                 "stage=sarvam_primary success=True "
-                f"language={result.get('language_code')} bytes={len(audio_bytes)} "
-                f"mime={effective_mime} request_ms={request_ms}"
+                f"language={result.get('language_code')} "
+                f"language_probability={result.get('language_probability')} "
+                f"bytes={len(audio_bytes)} mime={effective_mime} "
+                f"request_ms={request_ms} transcript_chars={len(transcript)} "
+                f"transcript_preview={transcript_preview!r}"
             )
             return result
         except httpx.TimeoutException as error:
@@ -138,3 +145,8 @@ class SarvamPrimaryVoiceAssistantService(FilesFallbackVoiceAssistantService):
                 "error": str(error)[:500],
                 "request_ms": round((time.perf_counter() - started) * 1000),
             }
+
+    @classmethod
+    def _transcript_log_preview(cls, transcript: str) -> str:
+        compact = " ".join(str(transcript or "").split())
+        return compact[: cls.TRANSCRIPT_LOG_PREVIEW_CHARS]
