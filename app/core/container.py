@@ -11,11 +11,11 @@ from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
 from app.services.demand_capture_service import DemandCaptureService
 from app.services.easy_job_command_service import EasyJobCommandService
-from app.services.intent_aware_conversation_service import IntentAwareConversationService
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.normalized_voice_assistant_service import NormalizedVoiceAssistantService
+from app.services.role_aware_conversation_service import RoleAwareConversationService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
 
@@ -44,7 +44,7 @@ class AppContainer:
             repository=self.appointment_repository,
             session_registry=self.session_registry,
         )
-        self.conversation_service = IntentAwareConversationService(
+        self.conversation_service = RoleAwareConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry,
             intent_router=self.intent_router_service,
