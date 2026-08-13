@@ -68,7 +68,8 @@ class AppContainer:
             tts_model=self.settings.gemini_tts_model,
             tts_voice=self.settings.gemini_tts_voice,
             voice_reply_max_chars=self.settings.voice_reply_max_chars,
-            transcription_attempts=1,
+            transcription_attempts=2,
+            generate_content_attempts=2,
             audio_codec_service=self.audio_codec_service,
         )
         self.job_matching_service = JobMatchingService(

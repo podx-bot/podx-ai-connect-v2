@@ -1,3 +1,13 @@
 def test_voice_fallback_sequence_documentation():
-    sequence = ["interactions_direct", "ffmpeg_normalize", "generate_content_audio"]
-    assert sequence == ["interactions_direct", "ffmpeg_normalize", "generate_content_audio"]
+    sequence = [
+        "ffmpeg_normalize",
+        "normalized_generate_content",
+        "original_generate_content",
+        "interactions_last_resort",
+    ]
+    assert sequence == [
+        "ffmpeg_normalize",
+        "normalized_generate_content",
+        "original_generate_content",
+        "interactions_last_resort",
+    ]
