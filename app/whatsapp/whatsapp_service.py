@@ -21,6 +21,14 @@ class WhatsAppService:
         self.api_version = api_version
         self.max_attempts = max(1, int(max_attempts))
         self.retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=3.0, read=60.0, write=60.0, pool=3.0),
+            limits=httpx.Limits(
+                max_keepalive_connections=10,
+                max_connections=20,
+                keepalive_expiry=30.0,
+            ),
+        )
 
     def is_configured(self) -> bool:
         return bool(self.access_token and self.phone_number_id and self.api_version)
@@ -85,7 +93,7 @@ class WhatsAppService:
             f"{self.api_version}/{self.phone_number_id}/media"
         )
         try:
-            response = httpx.post(
+            response = self._http_client.post(
                 url,
                 headers=self._auth_headers(),
                 data={"messaging_product": "whatsapp"},
@@ -222,18 +230,24 @@ class WhatsAppService:
         metadata_url = (
             f"https://graph.facebook.com/{self.api_version}/{str(media_id).strip()}"
         )
+        total_started = time.perf_counter()
         try:
-            metadata_response = httpx.get(
+            metadata_started = time.perf_counter()
+            metadata_response = self._http_client.get(
                 metadata_url,
                 headers=self._auth_headers(),
                 timeout=30.0,
             )
+            metadata_ms = round((time.perf_counter() - metadata_started) * 1000)
             if not (200 <= metadata_response.status_code < 300):
                 return {
                     "success": False,
                     "status": "MEDIA_METADATA_HTTP_ERROR",
                     "http_status": metadata_response.status_code,
                     "provider_response": self._safe_json(metadata_response),
+                    "metadata_ms": metadata_ms,
+                    "download_ms": 0,
+                    "media_total_ms": round((time.perf_counter() - total_started) * 1000),
                 }
 
             metadata = metadata_response.json()
@@ -243,18 +257,26 @@ class WhatsAppService:
                     "success": False,
                     "status": "MEDIA_URL_MISSING",
                     "provider_response": metadata,
+                    "metadata_ms": metadata_ms,
+                    "download_ms": 0,
+                    "media_total_ms": round((time.perf_counter() - total_started) * 1000),
                 }
 
-            media_response = httpx.get(
+            download_started = time.perf_counter()
+            media_response = self._http_client.get(
                 download_url,
                 headers=self._auth_headers(),
                 timeout=60.0,
             )
+            download_ms = round((time.perf_counter() - download_started) * 1000)
             if not (200 <= media_response.status_code < 300):
                 return {
                     "success": False,
                     "status": "MEDIA_DOWNLOAD_HTTP_ERROR",
                     "http_status": media_response.status_code,
+                    "metadata_ms": metadata_ms,
+                    "download_ms": download_ms,
+                    "media_total_ms": round((time.perf_counter() - total_started) * 1000),
                 }
 
             return {
@@ -264,19 +286,27 @@ class WhatsAppService:
                 "mime_type": metadata.get("mime_type")
                 or media_response.headers.get("content-type"),
                 "file_size": len(media_response.content),
+                "metadata_ms": metadata_ms,
+                "download_ms": download_ms,
+                "media_total_ms": round((time.perf_counter() - total_started) * 1000),
             }
         except httpx.TimeoutException:
-            return {"success": False, "status": "MEDIA_TIMEOUT"}
+            return {
+                "success": False,
+                "status": "MEDIA_TIMEOUT",
+                "media_total_ms": round((time.perf_counter() - total_started) * 1000),
+            }
         except (httpx.HTTPError, ValueError) as error:
             return {
                 "success": False,
                 "status": "MEDIA_NETWORK_ERROR",
                 "error": str(error),
+                "media_total_ms": round((time.perf_counter() - total_started) * 1000),
             }
 
     def _send_once(self, url: str, headers: dict, payload: dict) -> dict[str, Any]:
         try:
-            response = httpx.post(url, headers=headers, json=payload, timeout=30.0)
+            response = self._http_client.post(url, headers=headers, json=payload, timeout=30.0)
             body = self._safe_json(response)
             success = 200 <= response.status_code < 300
             return {
