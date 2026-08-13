@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
-import io
-import wave
+import time
 from typing import Any, Optional
 
 import httpx
@@ -11,17 +9,20 @@ from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoi
 
 
 class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
-    """Use Sarvam Bulbul v3 for TTS with a strict latency budget.
+    """Use Sarvam Bulbul v3 HTTP streaming TTS with bounded latency.
 
-    Gemini remains a compatibility fallback only for configuration/language cases.
-    Runtime Sarvam timeout/provider failures fail fast so a late voice response never
-    blocks or arrives tens of seconds after the already-delivered useful text reply.
+    Runtime provider failures fail fast. Gemini is retained only for configuration
+    and unsupported-language compatibility cases so text replies never wait on a
+    slow secondary TTS call.
     """
 
-    TTS_URL = "https://api.sarvam.ai/text-to-speech"
+    TTS_URL = "https://api.sarvam.ai/text-to-speech/stream"
     TTS_MODEL = "bulbul:v3"
     TTS_SPEAKER = "shubh"
-    TTS_TIMEOUT_SECONDS = 3.5
+    TTS_SAMPLE_RATE = 24000
+    TTS_CONNECT_TIMEOUT_SECONDS = 2.5
+    TTS_READ_TIMEOUT_SECONDS = 6.0
+    TTS_MAX_PCM_BYTES = 4 * 1024 * 1024
 
     GEMINI_COMPATIBILITY_FALLBACK_STATUSES = {
         "SARVAM_TTS_NOT_CONFIGURED",
@@ -48,13 +49,13 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         status = str(primary.get("status") or "SARVAM_TTS_ERROR")
         if status not in self.GEMINI_COMPATIBILITY_FALLBACK_STATUSES:
             print(
-                "VOICE TTS PATH: stage=sarvam_tts_fast_fail "
+                "VOICE TTS PATH: stage=sarvam_tts_stream_fast_fail "
                 f"status={status} error_type={primary.get('error_type')} "
                 "gemini_fallback=False",
                 flush=True,
             )
             failed = dict(primary)
-            failed["tts_path"] = "sarvam_fast_fail"
+            failed["tts_path"] = "sarvam_http_stream_fast_fail"
             failed["gemini_fallback"] = False
             return failed
 
@@ -81,16 +82,16 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         if not language_code:
             return {"success": False, "status": "SARVAM_TTS_UNSUPPORTED_LANGUAGE"}
 
-        cache_key = f"sarvam:{language_code}:{spoken_text}"
+        cache_key = f"sarvam-stream:{language_code}:{spoken_text}"
         cached_pcm = self._tts_cache.get(cache_key)
         if cached_pcm:
             return self._success_result(
                 cached_pcm,
                 spoken_text,
                 language_code,
-                sample_rate=24000,
-                channels=1,
                 cache_hit=True,
+                first_byte_ms=0,
+                stream_ms=0,
             )
 
         header_name = "api-" + "subscription-key"
@@ -101,57 +102,82 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
             "speaker": self.TTS_SPEAKER,
             "model": self.TTS_MODEL,
             "pace": 1.1,
-            "speech_sample_rate": 24000,
-            "output_audio_codec": "wav",
+            "speech_sample_rate": self.TTS_SAMPLE_RATE,
+            "output_audio_codec": "linear16",
             "temperature": 0.4,
         }
+        timeout = httpx.Timeout(
+            connect=self.TTS_CONNECT_TIMEOUT_SECONDS,
+            read=self.TTS_READ_TIMEOUT_SECONDS,
+            write=3.0,
+            pool=2.0,
+        )
+
+        started = time.perf_counter()
+        first_byte_ms = None
+        pcm_parts: list[bytes] = []
+        total_bytes = 0
 
         try:
-            with httpx.Client(timeout=self.TTS_TIMEOUT_SECONDS) as client:
-                response = client.post(self.TTS_URL, headers=headers, json=payload)
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "status": f"SARVAM_TTS_HTTP_{response.status_code}",
-                    "error_type": "HTTPStatusError",
-                }
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream("POST", self.TTS_URL, headers=headers, json=payload) as response:
+                    if response.status_code != 200:
+                        error_preview = response.read()[:300].decode("utf-8", errors="replace")
+                        return {
+                            "success": False,
+                            "status": f"SARVAM_TTS_HTTP_{response.status_code}",
+                            "error_type": "HTTPStatusError",
+                            "error": error_preview,
+                        }
 
-            body = response.json()
-            audio_items = body.get("audios") or []
-            if not audio_items:
-                return {"success": False, "status": "SARVAM_TTS_EMPTY_AUDIO"}
+                    for chunk in response.iter_bytes():
+                        if not chunk:
+                            continue
+                        if first_byte_ms is None:
+                            first_byte_ms = round((time.perf_counter() - started) * 1000)
+                        total_bytes += len(chunk)
+                        if total_bytes > self.TTS_MAX_PCM_BYTES:
+                            return {
+                                "success": False,
+                                "status": "SARVAM_TTS_AUDIO_TOO_LARGE",
+                                "error_type": "AudioSizeError",
+                            }
+                        pcm_parts.append(chunk)
 
-            wav_bytes = base64.b64decode(str(audio_items[0]))
-            pcm_bytes, sample_rate, channels = self.wav_to_pcm(wav_bytes)
+            pcm_bytes = b"".join(pcm_parts)
             if not pcm_bytes:
                 return {"success": False, "status": "SARVAM_TTS_EMPTY_PCM"}
 
+            stream_ms = round((time.perf_counter() - started) * 1000)
             self._cache_tts(cache_key, pcm_bytes)
             print(
-                "VOICE TTS PATH: stage=sarvam_tts success=True "
-                f"language={language_code} pcm_bytes={len(pcm_bytes)}",
+                "VOICE TTS PATH: stage=sarvam_tts_http_stream success=True "
+                f"language={language_code} first_byte_ms={first_byte_ms or stream_ms} "
+                f"stream_ms={stream_ms} pcm_bytes={len(pcm_bytes)}",
                 flush=True,
             )
             return self._success_result(
                 pcm_bytes,
                 spoken_text,
                 language_code,
-                sample_rate=sample_rate,
-                channels=channels,
                 cache_hit=False,
+                first_byte_ms=first_byte_ms or stream_ms,
+                stream_ms=stream_ms,
             )
         except httpx.TimeoutException as error:
             return {
                 "success": False,
-                "status": "SARVAM_TTS_TIMEOUT",
+                "status": "SARVAM_TTS_STREAM_TIMEOUT",
                 "error_type": type(error).__name__,
+                "first_byte_ms": first_byte_ms,
             }
         except Exception as error:
             return {
                 "success": False,
-                "status": "SARVAM_TTS_ERROR",
+                "status": "SARVAM_TTS_STREAM_ERROR",
                 "error_type": type(error).__name__,
                 "error": str(error)[:300],
+                "first_byte_ms": first_byte_ms,
             }
 
     def _success_result(
@@ -160,34 +186,26 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         spoken_text: str,
         language_code: str,
         *,
-        sample_rate: int,
-        channels: int,
         cache_hit: bool,
+        first_byte_ms: int,
+        stream_ms: int,
     ) -> dict[str, Any]:
         return {
             "success": True,
-            "status": "SYNTHESIZED_SARVAM_CACHE" if cache_hit else "SYNTHESIZED_SARVAM",
+            "status": "SYNTHESIZED_SARVAM_STREAM_CACHE" if cache_hit else "SYNTHESIZED_SARVAM_STREAM",
             "content": pcm_bytes,
-            "sample_rate": sample_rate,
-            "channels": channels,
+            "sample_rate": self.TTS_SAMPLE_RATE,
+            "channels": 1,
             "sample_width": 2,
             "spoken_text": spoken_text,
             "model": self.TTS_MODEL,
             "voice": self.TTS_SPEAKER,
             "cache_hit": cache_hit,
-            "tts_path": "sarvam_bulbul_v3",
+            "tts_path": "sarvam_bulbul_v3_http_stream",
             "language_code": language_code,
+            "first_byte_ms": first_byte_ms,
+            "stream_ms": stream_ms,
         }
-
-    @staticmethod
-    def wav_to_pcm(wav_bytes: bytes) -> tuple[bytes, int, int]:
-        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-            if int(wav_file.getsampwidth()) != 2:
-                raise ValueError("Sarvam WAV must be signed 16-bit PCM")
-            sample_rate = int(wav_file.getframerate())
-            channels = int(wav_file.getnchannels())
-            pcm_bytes = wav_file.readframes(wav_file.getnframes())
-        return pcm_bytes, sample_rate, channels
 
     @classmethod
     def detect_tts_language(cls, text: str) -> Optional[str]:
