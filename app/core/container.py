@@ -12,11 +12,11 @@ from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
 from app.services.demand_capture_service import DemandCaptureService
 from app.services.easy_job_command_service import EasyJobCommandService
-from app.services.files_fallback_voice_assistant_service import FilesFallbackVoiceAssistantService
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
+from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoiceAssistantService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
 
@@ -61,7 +61,10 @@ class AppContainer:
             api_version=self.settings.whatsapp_api_version,
         )
         self.audio_codec_service = AudioCodecService()
-        self.voice_assistant_service = FilesFallbackVoiceAssistantService(
+        self.voice_assistant_service = SarvamPrimaryVoiceAssistantService(
+            sarvam_api_key=self.settings.sarvam_api_key,
+            sarvam_model=self.settings.sarvam_stt_model,
+            sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,
             api_key=self.settings.gemini_api_key,
             model=self.settings.gemini_voice_model,
             max_audio_bytes=self.settings.gemini_voice_max_bytes,
