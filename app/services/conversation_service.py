@@ -28,6 +28,22 @@ class ConversationService:
         "2": "Tomorrow", "tomorrow": "Tomorrow", "రేపు": "Tomorrow",
         "3": "This Week", "this week": "This Week", "ఈ వారం": "This Week"
     }
+    CAPABILITY_OPTIONS = {
+        "1": "BUYER",
+        "2": "SELLER",
+        "3": "SERVICE_CUSTOMER",
+        "4": "SERVICE_PROVIDER",
+        "5": "WORKER",
+        "6": "EMPLOYER",
+    }
+    CAPABILITY_LABELS = {
+        "BUYER": "Buy products",
+        "SELLER": "Sell products",
+        "SERVICE_CUSTOMER": "Need services",
+        "SERVICE_PROVIDER": "Provide services",
+        "WORKER": "Find work",
+        "EMPLOYER": "Hire workers",
+    }
 
     def __init__(self, user_repository: UserRepository, session_registry: SessionRegistry) -> None:
         self.user_repository = user_repository
@@ -48,7 +64,11 @@ class ConversationService:
             return "Conversation reset అయింది. మళ్లీ Hi పంపండి."
 
         if normalized in {"hi", "hello", "hey", "హాయ్", "హలో"}:
-            if existing_user and existing_user.get("registration_complete") == 1:
+            if (
+                existing_user
+                and existing_user.get("registration_complete") == 1
+                and session.step != ConversationStep.WAITING_CAPABILITIES
+            ):
                 session.step = ConversationStep.MAIN_MENU
                 session.data.clear()
                 return self._reply(sender_mobile, self._main_menu())
@@ -102,9 +122,35 @@ class ConversationService:
             if len(clean_message) < 2:
                 return self._reply(sender_mobile, "దయచేసి సరైన ప్రాంతం పేరు చెప్పండి.")
             session.data["area"] = clean_message
-            self.user_repository.create_or_update_registration(whatsapp_mobile=sender_mobile, entered_mobile=session.data["entered_mobile"], name=session.data["name"], language=session.data["language"], area=session.data["area"])
+            self.user_repository.create_or_update_registration(
+                whatsapp_mobile=sender_mobile,
+                entered_mobile=session.data["entered_mobile"],
+                name=session.data["name"],
+                language=session.data["language"],
+                area=session.data["area"],
+            )
+            session.step = ConversationStep.WAITING_CAPABILITIES
+            return self._reply(sender_mobile, self._capability_menu())
+
+        if session.step == ConversationStep.WAITING_CAPABILITIES:
+            capabilities = self._parse_capabilities(clean_message)
+            if not capabilities:
+                return self._reply(
+                    sender_mobile,
+                    "ఒకటి లేదా ఎక్కువ options ఎంచుకోండి. ఉదాహరణ: 1,2 లేదా 5,6\n\n" + self._capability_menu(),
+                )
+            self.user_repository.add_capabilities(
+                sender_mobile,
+                capabilities,
+                source="registration",
+            )
+            session.data["registration_capabilities"] = capabilities
             session.step = ConversationStep.MAIN_MENU
-            return self._reply(sender_mobile, "✅ మీ Registration పూర్తైంది.\n\n" + self._main_menu())
+            selected = ", ".join(self.CAPABILITY_LABELS[item] for item in capabilities)
+            return self._reply(
+                sender_mobile,
+                f"✅ మీ Registration పూర్తైంది.\nమీ PODX roles: {selected}\n\n" + self._main_menu(),
+            )
 
         if session.step == ConversationStep.MAIN_MENU:
             if normalized in {"hi", "hello", "menu", "హాయ్"}:
@@ -123,9 +169,11 @@ class ConversationService:
                 user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
                 if not user:
                     return self._reply(sender_mobile, "Profile దొరకలేదు.")
-                return self._reply(sender_mobile, "👤 మీ ప్రొఫైల్\n\n" f"పేరు: {user.get('name')}\n" f"మొబైల్: {user.get('entered_mobile')}\n" f"ప్రాంతం: {user.get('area')}\n" f"పని: {user.get('job_category') or '-'}\n" f"Experience: {user.get('experience') or '-'}\n" f"Availability: {user.get('availability') or '-'}\n\n" + self._main_menu())
+                capabilities = user.get("capabilities") or []
+                capability_text = ", ".join(self.CAPABILITY_LABELS.get(item, item) for item in capabilities) or "-"
+                return self._reply(sender_mobile, "👤 మీ ప్రొఫైల్\n\n" f"పేరు: {user.get('name')}\n" f"మొబైల్: {user.get('entered_mobile')}\n" f"ప్రాంతం: {user.get('area')}\n" f"PODX roles: {capability_text}\n" f"పని: {user.get('job_category') or '-'}\n" f"Experience: {user.get('experience') or '-'}\n" f"Availability: {user.get('availability') or '-'}\n\n" + self._main_menu())
             if normalized in {"4", "సహాయం"}:
-                return self._reply(sender_mobile, "PODX ఉద్యోగాలు మరియు వర్కర్స్‌ను కనెక్ట్ చేస్తుంది.\n\n" + self._main_menu())
+                return self._reply(sender_mobile, "PODX ఉద్యోగాలు, వర్కర్స్, products మరియు local servicesను connect చేయడానికి నిర్మించబడుతోంది.\n\n" + self._main_menu())
             return self._reply(sender_mobile, "దయచేసి Menuలో ఉన్న option ఎంచుకోండి.\n\n" + self._main_menu())
 
         if session.step == ConversationStep.EMPLOYER_SERVICE:
@@ -187,6 +235,7 @@ class ConversationService:
             ConversationStep.WAITING_NAME: ConversationStep.WAITING_MOBILE,
             ConversationStep.WAITING_LANGUAGE: ConversationStep.WAITING_NAME,
             ConversationStep.WAITING_AREA: ConversationStep.WAITING_LANGUAGE,
+            ConversationStep.WAITING_CAPABILITIES: ConversationStep.WAITING_AREA,
             ConversationStep.WORKER_CATEGORY: ConversationStep.MAIN_MENU,
             ConversationStep.WORKER_EXPERIENCE: ConversationStep.WORKER_CATEGORY,
             ConversationStep.WORKER_AVAILABILITY: ConversationStep.WORKER_EXPERIENCE,
@@ -209,6 +258,8 @@ class ConversationService:
             ConversationStep.WAITING_MOBILE: "మీ 10 అంకెల మొబైల్ నంబర్ పంపండి.",
             ConversationStep.WAITING_NAME: "మీ పేరు చెప్పండి.",
             ConversationStep.WAITING_LANGUAGE: "మీ భాష ఎంచుకోండి:\n1. తెలుగు\n2. English\n3. हिंदी",
+            ConversationStep.WAITING_AREA: "మీ ప్రాంతం లేదా పట్టణం పేరు చెప్పండి.",
+            ConversationStep.WAITING_CAPABILITIES: self._capability_menu(),
             ConversationStep.MAIN_MENU: self._main_menu(),
             ConversationStep.WORKER_CATEGORY: self._category_menu(),
             ConversationStep.WORKER_EXPERIENCE: "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years",
@@ -218,6 +269,31 @@ class ConversationService:
             ConversationStep.EMPLOYER_LOCATION: "📍 చివరి స్టెప్: WhatsApp Attachment ద్వారా మీ Job Location share చేయండి.",
         }
         return self._reply(sender_mobile, prompts.get(target, "Previous stepకి వచ్చారు."))
+
+    @classmethod
+    def _parse_capabilities(cls, message: str) -> list[str]:
+        normalized = str(message or "").lower().strip()
+        if normalized in {"7", "all", "అన్నీ", "all roles", "everything"}:
+            return list(cls.CAPABILITY_OPTIONS.values())
+
+        selected = []
+        for number in re.findall(r"(?<!\d)[1-6](?!\d)", normalized):
+            capability = cls.CAPABILITY_OPTIONS[number]
+            if capability not in selected:
+                selected.append(capability)
+
+        keyword_map = {
+            "BUYER": ("buyer", "buy", "కొనాలి", "కొనుగోలు", "కొంటాను"),
+            "SELLER": ("seller", "sell", "అమ్మాలి", "అమ్ముతాను", "విక్రయం"),
+            "SERVICE_CUSTOMER": ("need service", "service కావాలి", "సేవ కావాలి"),
+            "SERVICE_PROVIDER": ("service provider", "provide service", "సేవ ఇస్తాను", "సర్వీస్ ఇస్తాను"),
+            "WORKER": ("find job", "job seeker", "పని కావాలి", "ఉద్యోగం కావాలి"),
+            "EMPLOYER": ("hire", "employer", "workers కావాలి", "వర్కర్స్ కావాలి"),
+        }
+        for capability, keywords in keyword_map.items():
+            if any(keyword in normalized for keyword in keywords) and capability not in selected:
+                selected.append(capability)
+        return selected
 
     @staticmethod
     def _is_job_seeker_intent(message: str) -> bool:
@@ -232,6 +308,21 @@ class ConversationService:
         if len(digits) != 10 or digits[0] not in {"6", "7", "8", "9"}:
             return None
         return digits
+
+    @staticmethod
+    def _capability_menu() -> str:
+        return (
+            "PODXలో మీరు ఏ విధంగా ఉపయోగించాలనుకుంటున్నారు?\n"
+            "ఒకటి లేదా ఎక్కువ options ఎంచుకోవచ్చు. ఉదా: 1,2,5\n\n"
+            "1. 🛒 Products కొనాలి (Buyer)\n"
+            "2. 🏪 Products అమ్మాలి (Seller)\n"
+            "3. 🔎 Service కావాలి\n"
+            "4. 🛠️ Service ఇవ్వాలి\n"
+            "5. 💼 పని కావాలి\n"
+            "6. 👷 Workers కావాలి\n"
+            "7. 🌐 అన్నీ / All\n\n"
+            "తర్వాత కూడా మీ అవసరాన్ని బట్టి PODX కొత్త roleని automatically add చేయగలదు."
+        )
 
     @staticmethod
     def _category_menu() -> str:

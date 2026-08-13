@@ -25,6 +25,7 @@ def register_user(service, sender: str):
     service.process(sender, "Manohar")
     service.process(sender, "1")
     service.process(sender, "Vuyyuru")
+    service.process(sender, "6")
 
 
 def test_hi_returns_registered_user_to_main_menu_from_employer_location(tmp_path):
