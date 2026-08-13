@@ -30,18 +30,29 @@ class IntentRouterService:
         self.api_key = str(api_key or "").strip()
         self.model = str(model or "").strip() or "gemini-3.6-flash"
         self._client = genai.Client(api_key=self.api_key) if self.api_key else None
+        self._last_classification_text: str | None = None
+        self._last_classification_result: dict[str, Any] | None = None
 
     def classify(self, message: str) -> dict[str, Any]:
         text = " ".join(str(message or "").strip().split())
         if not text:
             return {"intent": "UNKNOWN", "source": "empty", "confidence": 0.0}
 
+        if text == self._last_classification_text and self._last_classification_result is not None:
+            return dict(self._last_classification_result)
+
         rule_intent = self._classify_rules(text)
         if rule_intent:
-            return {"intent": rule_intent, "source": "rules", "confidence": 1.0}
+            return self._remember_classification(
+                text,
+                {"intent": rule_intent, "source": "rules", "confidence": 1.0},
+            )
 
         if self._client is None:
-            return {"intent": "UNKNOWN", "source": "no_ai_key", "confidence": 0.0}
+            return self._remember_classification(
+                text,
+                {"intent": "UNKNOWN", "source": "no_ai_key", "confidence": 0.0},
+            )
 
         prompt = (
             "Classify this PODX user request into exactly one intent. "
@@ -68,16 +79,30 @@ class IntentRouterService:
             label = str(getattr(interaction, "output_text", "") or "").strip().upper()
             label = re.sub(r"[^A-Z_]", "", label)
             if label in self.SUPPORTED_INTENTS:
-                return {"intent": label, "source": "gemini", "confidence": 0.8}
+                return self._remember_classification(
+                    text,
+                    {"intent": label, "source": "gemini", "confidence": 0.8},
+                )
         except Exception as error:
-            return {
-                "intent": "UNKNOWN",
-                "source": "gemini_error",
-                "confidence": 0.0,
-                "error_type": type(error).__name__,
-            }
+            return self._remember_classification(
+                text,
+                {
+                    "intent": "UNKNOWN",
+                    "source": "gemini_error",
+                    "confidence": 0.0,
+                    "error_type": type(error).__name__,
+                },
+            )
 
-        return {"intent": "UNKNOWN", "source": "gemini_unknown", "confidence": 0.0}
+        return self._remember_classification(
+            text,
+            {"intent": "UNKNOWN", "source": "gemini_unknown", "confidence": 0.0},
+        )
+
+    def _remember_classification(self, text: str, result: dict[str, Any]) -> dict[str, Any]:
+        self._last_classification_text = text
+        self._last_classification_result = dict(result)
+        return dict(result)
 
     @staticmethod
     def _normalize_for_rules(text: str) -> str:
