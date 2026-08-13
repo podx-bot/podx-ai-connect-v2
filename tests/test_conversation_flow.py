@@ -23,7 +23,8 @@ def register_user(service, sender: str):
     assert "పేరు" in service.process(sender, "9999999999")
     assert "భాష" in service.process(sender, "Manohar")
     assert "ప్రాంతం" in service.process(sender, "1")
-    assert "Registration" in service.process(sender, "Vuyyuru")
+    assert "Buyer" in service.process(sender, "Vuyyuru")
+    assert "Registration" in service.process(sender, "5")
 
 
 def test_registration_and_worker_menu(tmp_path):
@@ -33,6 +34,47 @@ def test_registration_and_worker_menu(tmp_path):
     register_user(service, sender)
     assert "పని" in service.process(sender, "1")
 
+    database.close()
+
+
+def test_registration_accepts_multiple_roles(tmp_path):
+    service, database = build_service(tmp_path / "multi-role-registration.db")
+    sender = "919111111111"
+
+    service.process(sender, "Hi")
+    service.process(sender, "9111111111")
+    service.process(sender, "Multi Role User")
+    service.process(sender, "1")
+    response = service.process(sender, "Vijayawada")
+    assert "ఒకటి లేదా ఎక్కువ" in response
+
+    response = service.process(sender, "1,2,4,5")
+    assert "Registration" in response
+    capabilities = service.user_repository.list_capabilities(sender)
+    assert capabilities == ["BUYER", "SELLER", "SERVICE_PROVIDER", "WORKER"]
+
+    database.close()
+
+
+def test_registration_all_option_seeds_all_capabilities(tmp_path):
+    service, database = build_service(tmp_path / "all-roles.db")
+    sender = "919222222222"
+
+    service.process(sender, "Hi")
+    service.process(sender, "9222222222")
+    service.process(sender, "All Roles User")
+    service.process(sender, "1")
+    service.process(sender, "Vuyyuru")
+    service.process(sender, "7")
+
+    assert set(service.user_repository.list_capabilities(sender)) == {
+        "BUYER",
+        "SELLER",
+        "SERVICE_CUSTOMER",
+        "SERVICE_PROVIDER",
+        "WORKER",
+        "EMPLOYER",
+    }
     database.close()
 
 
