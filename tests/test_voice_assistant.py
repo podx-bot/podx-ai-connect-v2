@@ -179,3 +179,32 @@ def test_telugu_onway_phrase_uses_active_job_context():
     service = EasyJobCommandService(_FakeRepository(active=active), lifecycle)
 
     assert service.process_text("9199", "నేను బయలుదేరాను") == "handled:ONWAY 12"
+
+
+class _FailOnLookupDatabase:
+    def fetchone(self, query, params):
+        raise AssertionError("ordinary request must not query pending invitations")
+
+
+class _FailOnLookupRepository:
+    def __init__(self):
+        self.database = _FailOnLookupDatabase()
+
+    def active_assignment_for_worker(self, worker_mobile):
+        raise AssertionError("ordinary request must not query active assignments")
+
+
+def test_easy_job_fast_gate_skips_all_lifecycle_lookups_for_service_request():
+    lifecycle = _FakeLifecycle()
+    service = EasyJobCommandService(_FailOnLookupRepository(), lifecycle)
+
+    assert service.process_text("9199", "Electrician కావాలి") is None
+    assert lifecycle.calls == []
+
+
+def test_easy_job_fast_gate_skips_all_lifecycle_lookups_for_product_request():
+    lifecycle = _FakeLifecycle()
+    service = EasyJobCommandService(_FailOnLookupRepository(), lifecycle)
+
+    assert service.process_text("9199", "Chicken కావాలి") is None
+    assert lifecycle.calls == []
