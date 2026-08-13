@@ -31,7 +31,7 @@ def _elapsed_ms(started_at: float) -> int:
 def _process_audio_background(container, incoming) -> None:
     """Finish voice processing after the webhook has already acknowledged receipt."""
     total_started = time.perf_counter()
-    request_id = incoming.provider_message_id
+    request_id = getattr(incoming, "provider_message_id", "unknown")
     transcript = None
     try:
         stage_started = time.perf_counter()
