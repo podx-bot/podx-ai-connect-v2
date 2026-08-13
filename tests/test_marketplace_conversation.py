@@ -88,7 +88,7 @@ def build_service():
     return service, users, registry, marketplace
 
 
-def test_seller_intent_collects_product_and_price_and_saves_listing():
+def test_seller_requires_confirmation_before_saving_listing():
     service, users, registry, marketplace = build_service()
 
     response = service.process("9199", "నేను products అమ్ముతాను")
@@ -99,6 +99,12 @@ def test_seller_intent_collects_product_and_price_and_saves_listing():
     assert registry.session.step == ConversationStep.SELLER_PRODUCT_PRICE
 
     response = service.process("9199", "₹250/kg")
+    assert "Save చేసే ముందు" in response
+    assert registry.session.step == ConversationStep.SELLER_CONFIRM
+    assert marketplace.seller_listings == []
+    assert "SELLER" not in users.capabilities
+
+    response = service.process("9199", "1")
     assert "Seller listing save" in response
     assert registry.session.step == ConversationStep.MAIN_MENU
     assert "SELLER" in users.capabilities
@@ -107,7 +113,31 @@ def test_seller_intent_collects_product_and_price_and_saves_listing():
     assert marketplace.seller_listings[0]["area"] == "Vijayawada"
 
 
-def test_service_provider_intent_collects_service_details_and_saves_profile():
+def test_seller_edit_does_not_save_wrong_voice_transcription():
+    service, users, registry, marketplace = build_service()
+
+    service.process("9199", "నేను products అమ్ముతాను")
+    service.process("9199", "చికెన్ అమృతాను")
+    service.process("9199", "రెండొందల యాభై కేజీ")
+
+    assert registry.session.step == ConversationStep.SELLER_CONFIRM
+    assert marketplace.seller_listings == []
+
+    response = service.process("9199", "2")
+    assert "మళ్లీ" in response
+    assert registry.session.step == ConversationStep.SELLER_PRODUCT_NAME
+    assert marketplace.seller_listings == []
+    assert "SELLER" not in users.capabilities
+
+    service.process("9199", "Chicken")
+    service.process("9199", "₹250/kg")
+    service.process("9199", "yes")
+
+    assert marketplace.seller_listings[0]["product_name"] == "Chicken"
+    assert marketplace.seller_listings[0]["price_text"] == "₹250/kg"
+
+
+def test_service_provider_requires_confirmation_before_saving_profile():
     service, users, registry, marketplace = build_service()
 
     response = service.process("9199", "నేను electrician service చేస్తాను")
@@ -117,13 +147,31 @@ def test_service_provider_intent_collects_service_details_and_saves_profile():
     service.process("9199", "Electrician")
     assert registry.session.step == ConversationStep.SERVICE_PROVIDER_DETAILS
 
-    response = service.process("9199", "Home wiring, available today")
+    response = service.process("9199", "Home wiring, ₹500 onwards")
+    assert "Save చేసే ముందు" in response
+    assert registry.session.step == ConversationStep.SERVICE_PROVIDER_CONFIRM
+    assert marketplace.provider_profiles == []
+
+    response = service.process("9199", "అవును")
     assert "Service Provider profile save" in response
     assert registry.session.step == ConversationStep.MAIN_MENU
     assert "SERVICE_PROVIDER" in users.capabilities
     assert marketplace.provider_profiles[0]["service_name"] == "Electrician"
-    assert marketplace.provider_profiles[0]["details"] == "Home wiring, available today"
+    assert marketplace.provider_profiles[0]["details"] == "Home wiring, ₹500 onwards"
     assert marketplace.provider_profiles[0]["area"] == "Vijayawada"
+
+
+def test_invalid_confirmation_keeps_confirmation_state():
+    service, _, registry, marketplace = build_service()
+
+    service.process("9199", "నేను products అమ్ముతాను")
+    service.process("9199", "Chicken")
+    service.process("9199", "₹250/kg")
+    response = service.process("9199", "maybe")
+
+    assert "1. Yes" in response
+    assert registry.session.step == ConversationStep.SELLER_CONFIRM
+    assert marketplace.seller_listings == []
 
 
 def test_marketplace_layer_preserves_manage_roles_command():
