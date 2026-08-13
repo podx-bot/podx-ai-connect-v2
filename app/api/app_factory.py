@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 
 from app.api.appointment_location_middleware import AppointmentLocationMiddleware
-from app.api.routes.health import router as health_router
-from app.api.routes.webhook import router as webhook_router
 from app.api.routes.debug import router as debug_router
+from app.api.routes.fast_webhook import router as webhook_router
+from app.api.routes.health import router as health_router
 from app.core.container import AppContainer
 
 
