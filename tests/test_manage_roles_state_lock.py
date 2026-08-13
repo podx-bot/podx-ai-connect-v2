@@ -11,9 +11,13 @@ class FakeSession:
 class FakeRegistry:
     def __init__(self):
         self.session = FakeSession()
+        self.saved = []
 
     def get(self, sender_mobile):
         return self.session
+
+    def save(self, sender_mobile):
+        self.saved.append(sender_mobile)
 
 
 class FakeUserRepository:
