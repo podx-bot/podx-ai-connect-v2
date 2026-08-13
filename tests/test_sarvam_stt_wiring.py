@@ -1,0 +1,7 @@
+from app.services.files_fallback_voice_assistant_service import FilesFallbackVoiceAssistantService
+from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoiceAssistantService
+
+
+def test_sarvam_primary_service_preserves_gemini_fallback_chain():
+    assert issubclass(SarvamPrimaryVoiceAssistantService, FilesFallbackVoiceAssistantService)
+    assert SarvamPrimaryVoiceAssistantService.SARVAM_STT_URL.endswith("/speech-to-text")
