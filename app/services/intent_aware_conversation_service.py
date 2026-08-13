@@ -39,10 +39,18 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_AVAILABILITY,
     }
 
-    def __init__(self, user_repository, session_registry, intent_router: IntentRouterService, appointment_service=None) -> None:
+    def __init__(
+        self,
+        user_repository,
+        session_registry,
+        intent_router: IntentRouterService,
+        appointment_service=None,
+        demand_capture_service=None,
+    ) -> None:
         super().__init__(user_repository=user_repository, session_registry=session_registry)
         self.intent_router = intent_router
         self.appointment_service = appointment_service
+        self.demand_capture_service = demand_capture_service
         self.smart_job_message_service = SmartJobMessageService()
 
     def process(self, sender_mobile: str, message: str) -> str:
@@ -83,10 +91,42 @@ class IntentAwareConversationService(ConversationService):
                 if routed_command:
                     return super().process(sender_mobile, routed_command)
                 if intent == "SERVICE":
-                    return self._reply(sender_mobile, "🛠️ మీకు local service కావాలని అర్థమైంది. Services module త్వరలో nearby providersకి directగా connect చేస్తుంది.")
+                    self._capture_unresolved_demand(
+                        sender_mobile=sender_mobile,
+                        intent=intent,
+                        message=clean_message,
+                        existing_user=existing_user,
+                    )
+                    return self._reply(
+                        sender_mobile,
+                        "🛠️ మీ local service request save చేశాను. ప్రస్తుతం direct match దొరకకపోతే PODX ఈ demandని track చేసి provider available అయినప్పుడు connect చేయగలదు.",
+                    )
                 if intent == "SHOP_PRODUCT":
-                    return self._reply(sender_mobile, "🛍️ మీరు shop/product గురించి అడుగుతున్నారని అర్థమైంది. Shops & Products module త్వరలో local availability, price, contact చూపిస్తుంది.")
+                    self._capture_unresolved_demand(
+                        sender_mobile=sender_mobile,
+                        intent=intent,
+                        message=clean_message,
+                        existing_user=existing_user,
+                    )
+                    return self._reply(
+                        sender_mobile,
+                        "🛍️ మీ product request save చేశాను. ప్రస్తుతం local match దొరకకపోతే PODX ఈ demandని track చేసి seller/stock available అయినప్పుడు connect చేయగలదు.",
+                    )
         return super().process(sender_mobile, clean_message)
+
+    def _capture_unresolved_demand(self, sender_mobile: str, intent: str, message: str, existing_user) -> None:
+        if self.demand_capture_service is None:
+            return
+        location_text = None
+        if existing_user:
+            location_text = existing_user.get("area") or existing_user.get("location_name")
+        self.demand_capture_service.capture_unresolved(
+            user_mobile=sender_mobile,
+            intent=intent,
+            source_message=message,
+            location_text=location_text,
+            structured_fields={"raw_intent": intent},
+        )
 
     def _route_smart_job(self, sender_mobile: str, message: str, intent: str) -> str:
         details = self.smart_job_message_service.extract(message)
