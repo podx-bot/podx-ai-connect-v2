@@ -5,6 +5,7 @@ from app.repositories.delivery_log_repository import DeliveryLogRepository
 from app.repositories.demand_repository import DemandRepository
 from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
+from app.repositories.marketplace_repository import MarketplaceRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.appointment_service import AppointmentService
@@ -14,8 +15,8 @@ from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
+from app.services.marketplace_conversation_service import MarketplaceConversationService
 from app.services.normalized_voice_assistant_service import NormalizedVoiceAssistantService
-from app.services.role_aware_conversation_service import RoleAwareConversationService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
 
@@ -33,6 +34,7 @@ class AppContainer:
         self.job_lifecycle_repository = JobLifecycleRepository(self.database)
         self.appointment_repository = AppointmentRepository(self.database)
         self.demand_repository = DemandRepository(self.database)
+        self.marketplace_repository = MarketplaceRepository(self.database)
         self.demand_capture_service = DemandCaptureService(self.demand_repository)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
@@ -44,10 +46,11 @@ class AppContainer:
             repository=self.appointment_repository,
             session_registry=self.session_registry,
         )
-        self.conversation_service = RoleAwareConversationService(
+        self.conversation_service = MarketplaceConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry,
             intent_router=self.intent_router_service,
+            marketplace_repository=self.marketplace_repository,
             appointment_service=self.appointment_service,
             demand_capture_service=self.demand_capture_service,
         )
