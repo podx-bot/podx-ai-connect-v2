@@ -2,12 +2,14 @@ from app.core.settings import load_settings
 from app.database.database import Database
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.delivery_log_repository import DeliveryLogRepository
+from app.repositories.demand_repository import DemandRepository
 from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
+from app.services.demand_capture_service import DemandCaptureService
 from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.intent_aware_conversation_service import IntentAwareConversationService
 from app.services.intent_router_service import IntentRouterService
@@ -30,6 +32,8 @@ class AppContainer:
         self.session_repository = SessionRepository(self.database)
         self.job_lifecycle_repository = JobLifecycleRepository(self.database)
         self.appointment_repository = AppointmentRepository(self.database)
+        self.demand_repository = DemandRepository(self.database)
+        self.demand_capture_service = DemandCaptureService(self.demand_repository)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
         self.intent_router_service = IntentRouterService(
@@ -45,6 +49,7 @@ class AppContainer:
             session_registry=self.session_registry,
             intent_router=self.intent_router_service,
             appointment_service=self.appointment_service,
+            demand_capture_service=self.demand_capture_service,
         )
 
         self.whatsapp_service = WhatsAppService(
