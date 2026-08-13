@@ -124,7 +124,6 @@ class IntentAwareConversationService(ConversationService):
         details = self.smart_job_message_service.extract(message)
         session = self.session_registry.get(sender_mobile)
         session.data.clear()
-        session.data["smart_prefill"] = True
 
         if intent == "JOB_SEEKER":
             session.data["role"] = "WORKER"
@@ -134,6 +133,8 @@ class IntentAwareConversationService(ConversationService):
                 session.data["experience"] = details["experience"]
             if details.get("availability"):
                 session.data["availability"] = details["availability"]
+            if any(details.get(key) for key in ("category", "experience", "availability")):
+                session.data["smart_prefill"] = True
             return self._next_worker_prompt_or_save(sender_mobile)
 
         session.data["role"] = "EMPLOYER"
@@ -143,6 +144,7 @@ class IntentAwareConversationService(ConversationService):
         if not session.data.get("service"):
             if len(message.split()) >= 4:
                 session.data["pending_requirement"] = message
+                session.data["smart_prefill"] = True
             session.step = ConversationStep.EMPLOYER_SERVICE
             return self._reply(sender_mobile, self._employer_service_menu())
 
@@ -152,7 +154,6 @@ class IntentAwareConversationService(ConversationService):
             requirement=message,
         )
         session.data["requirement"] = message
-        session.data.pop("smart_prefill", None)
         session.step = ConversationStep.EMPLOYER_LOCATION
         return self._reply(
             sender_mobile,
