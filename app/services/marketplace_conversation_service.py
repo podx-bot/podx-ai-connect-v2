@@ -20,6 +20,9 @@ class MarketplaceConversationService(RoleAwareConversationService):
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
         registered = bool(existing_user and existing_user.get("registration_complete") == 1)
 
+        if registered and normalized in self.ROLE_COMMANDS:
+            return super().process(sender_mobile, clean_message)
+
         if registered and session.step == ConversationStep.SELLER_PRODUCT_NAME:
             if len(clean_message) < 2:
                 return self._reply(sender_mobile, "మీరు అమ్మే product పేరు పంపండి.")
