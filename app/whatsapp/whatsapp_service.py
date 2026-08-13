@@ -180,26 +180,38 @@ class WhatsAppService:
         mime_type: str = "audio/ogg",
         file_name: str = "podx-reply.ogg",
     ) -> dict[str, Any]:
+        total_started = time.perf_counter()
+        upload_started = total_started
         upload_result = self.upload_audio(
             audio_bytes=audio_bytes,
             mime_type=mime_type,
             file_name=file_name,
         )
+        upload_ms = round((time.perf_counter() - upload_started) * 1000)
         if not upload_result.get("success"):
             return {
                 "success": False,
                 "status": "VOICE_UPLOAD_FAILED",
                 "upload_result": upload_result,
+                "upload_ms": upload_ms,
+                "message_send_ms": 0,
+                "voice_send_total_ms": round((time.perf_counter() - total_started) * 1000),
             }
+
+        message_started = time.perf_counter()
         send_result = self.send_audio_by_id(
             recipient_mobile=recipient_mobile,
             media_id=upload_result["media_id"],
             as_voice_message=True,
         )
+        message_send_ms = round((time.perf_counter() - message_started) * 1000)
         return {
             **send_result,
             "media_id": upload_result["media_id"],
             "upload_result": upload_result,
+            "upload_ms": upload_ms,
+            "message_send_ms": message_send_ms,
+            "voice_send_total_ms": round((time.perf_counter() - total_started) * 1000),
         }
 
     def download_media(self, media_id: str) -> dict[str, Any]:
