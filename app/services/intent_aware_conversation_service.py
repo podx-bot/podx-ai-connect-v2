@@ -39,17 +39,8 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_AVAILABILITY,
     }
 
-    def __init__(
-        self,
-        user_repository,
-        session_registry,
-        intent_router: IntentRouterService,
-        appointment_service=None,
-    ) -> None:
-        super().__init__(
-            user_repository=user_repository,
-            session_registry=session_registry,
-        )
+    def __init__(self, user_repository, session_registry, intent_router: IntentRouterService, appointment_service=None) -> None:
+        super().__init__(user_repository=user_repository, session_registry=session_registry)
         self.intent_router = intent_router
         self.appointment_service = appointment_service
         self.smart_job_message_service = SmartJobMessageService()
@@ -58,9 +49,7 @@ class IntentAwareConversationService(ConversationService):
         clean_message = str(message or "").strip()
         session = self.session_registry.get(sender_mobile)
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
-        registered = bool(
-            existing_user and existing_user.get("registration_complete") == 1
-        )
+        registered = bool(existing_user and existing_user.get("registration_complete") == 1)
 
         if registered and session.data.get("smart_prefill"):
             if session.step in self.SMART_WORKER_STEPS:
@@ -77,47 +66,26 @@ class IntentAwareConversationService(ConversationService):
             interrupt_intent = rule_classifier(clean_message) if callable(rule_classifier) else None
             if registered and interrupt_intent in self.APPOINTMENT_INTERRUPT_INTENTS:
                 return self._route_smart_job(sender_mobile, clean_message, interrupt_intent)
-
-            appointment_reply = self.appointment_service.process(
-                sender_mobile,
-                clean_message,
-            )
+            appointment_reply = self.appointment_service.process(sender_mobile, clean_message)
             if appointment_reply is not None:
                 return appointment_reply
 
         router_allowed = registered and session.step in self.INTENT_SWITCH_STEPS
-
         if router_allowed:
             classification = self.intent_router.classify(clean_message)
             intent = classification.get("intent", "UNKNOWN")
-
             if intent == "APPOINTMENT" and self.appointment_service:
-                return self.appointment_service.start(
-                    sender_mobile,
-                    initial_message=clean_message,
-                )
-
+                return self.appointment_service.start(sender_mobile, initial_message=clean_message)
             if intent in {"JOB_SEEKER", "EMPLOYER"}:
                 return self._route_smart_job(sender_mobile, clean_message, intent)
-
             if session.step in {ConversationStep.START, ConversationStep.MAIN_MENU}:
                 routed_command = self.ROUTED_COMMANDS.get(intent)
                 if routed_command:
                     return super().process(sender_mobile, routed_command)
-
                 if intent == "SERVICE":
-                    return self._reply(
-                        sender_mobile,
-                        "🛠️ మీకు local service కావాలని అర్థమైంది. "
-                        "Services module త్వరలో nearby providersకి directగా connect చేస్తుంది.",
-                    )
+                    return self._reply(sender_mobile, "🛠️ మీకు local service కావాలని అర్థమైంది. Services module త్వరలో nearby providersకి directగా connect చేస్తుంది.")
                 if intent == "SHOP_PRODUCT":
-                    return self._reply(
-                        sender_mobile,
-                        "🛍️ మీరు shop/product గురించి అడుగుతున్నారని అర్థమైంది. "
-                        "Shops & Products module త్వరలో local availability, price, contact చూపిస్తుంది.",
-                    )
-
+                    return self._reply(sender_mobile, "🛍️ మీరు shop/product గురించి అడుగుతున్నారని అర్థమైంది. Shops & Products module త్వరలో local availability, price, contact చూపిస్తుంది.")
         return super().process(sender_mobile, clean_message)
 
     def _route_smart_job(self, sender_mobile: str, message: str, intent: str) -> str:
@@ -146,60 +114,41 @@ class IntentAwareConversationService(ConversationService):
                 session.data["pending_requirement"] = message
                 session.data["smart_prefill"] = True
             session.step = ConversationStep.EMPLOYER_SERVICE
-            return self._reply(sender_mobile, self._employer_service_menu())
+            prefix = "👷 Employer workflow ప్రారంభమవుతుంది.\n\n" if not session.data.get("smart_prefill") else ""
+            return self._reply(sender_mobile, prefix + self._employer_service_menu())
 
-        self.user_repository.save_employer_post(
-            whatsapp_mobile=sender_mobile,
-            service=session.data["service"],
-            requirement=message,
-        )
+        self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=session.data["service"], requirement=message)
         session.data["requirement"] = message
         session.step = ConversationStep.EMPLOYER_LOCATION
-        return self._reply(
-            sender_mobile,
-            f"✅ {session.data['service']} requirement అర్థమైంది. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Job Location share చేయండి.",
-        )
+        return self._reply(sender_mobile, f"✅ {session.data['service']} requirement అర్థమైంది. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Job Location share చేయండి.")
 
     def _continue_smart_worker(self, sender_mobile: str, message: str) -> str | None:
         session = self.session_registry.get(sender_mobile)
         normalized = message.lower()
-
         if session.step == ConversationStep.WORKER_CATEGORY:
             value = self.CATEGORY_MAP.get(normalized)
             if value is None:
-                extracted = self.smart_job_message_service.extract(message)
-                value = extracted.get("category")
+                value = self.smart_job_message_service.extract(message).get("category")
             if value is None:
                 return self._reply(sender_mobile, self._category_menu())
             session.data["category"] = value
             return self._next_worker_prompt_or_save(sender_mobile)
-
         if session.step == ConversationStep.WORKER_EXPERIENCE:
             value = self.EXPERIENCE_MAP.get(normalized)
             if value is None:
-                extracted = self.smart_job_message_service.extract(message)
-                value = extracted.get("experience")
+                value = self.smart_job_message_service.extract(message).get("experience")
             if value is None:
-                return self._reply(
-                    sender_mobile,
-                    "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years",
-                )
+                return self._reply(sender_mobile, "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years")
             session.data["experience"] = value
             return self._next_worker_prompt_or_save(sender_mobile)
-
         if session.step == ConversationStep.WORKER_AVAILABILITY:
             value = self.AVAILABILITY_MAP.get(normalized)
             if value is None:
-                extracted = self.smart_job_message_service.extract(message)
-                value = extracted.get("availability")
+                value = self.smart_job_message_service.extract(message).get("availability")
             if value is None:
-                return self._reply(
-                    sender_mobile,
-                    "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week",
-                )
+                return self._reply(sender_mobile, "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week")
             session.data["availability"] = value
             return self._next_worker_prompt_or_save(sender_mobile)
-
         return None
 
     def _next_worker_prompt_or_save(self, sender_mobile: str) -> str:
@@ -209,30 +158,14 @@ class IntentAwareConversationService(ConversationService):
             return self._reply(sender_mobile, self._category_menu())
         if not session.data.get("experience"):
             session.step = ConversationStep.WORKER_EXPERIENCE
-            return self._reply(
-                sender_mobile,
-                f"✅ {session.data['category']} పని అర్థమైంది. మీ Experience ఎంత?\n"
-                "1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years",
-            )
+            return self._reply(sender_mobile, f"✅ {session.data['category']} పని అర్థమైంది. మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years")
         if not session.data.get("availability"):
             session.step = ConversationStep.WORKER_AVAILABILITY
-            return self._reply(
-                sender_mobile,
-                "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week",
-            )
-
-        self.user_repository.save_worker_profile(
-            whatsapp_mobile=sender_mobile,
-            category=session.data["category"],
-            experience=session.data["experience"],
-            availability=session.data["availability"],
-        )
+            return self._reply(sender_mobile, "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week")
+        self.user_repository.save_worker_profile(whatsapp_mobile=sender_mobile, category=session.data["category"], experience=session.data["experience"], availability=session.data["availability"])
         session.data.pop("smart_prefill", None)
         session.step = ConversationStep.WORKER_LOCATION
-        return self._reply(
-            sender_mobile,
-            "✅ మీ పని వివరాలు తీసుకున్నాను. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Current Location share చేయండి.",
-        )
+        return self._reply(sender_mobile, "✅ మీ పని వివరాలు తీసుకున్నాను. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Current Location share చేయండి.")
 
     def _continue_smart_employer(self, sender_mobile: str, message: str) -> str | None:
         session = self.session_registry.get(sender_mobile)
@@ -242,27 +175,15 @@ class IntentAwareConversationService(ConversationService):
             service = self.smart_job_message_service.extract(message).get("category")
         if service is None:
             return self._reply(sender_mobile, self._employer_service_menu())
-
         session.data["service"] = service
         pending_requirement = str(session.data.get("pending_requirement") or "").strip()
         if pending_requirement:
-            self.user_repository.save_employer_post(
-                whatsapp_mobile=sender_mobile,
-                service=service,
-                requirement=pending_requirement,
-            )
+            self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=service, requirement=pending_requirement)
             session.data["requirement"] = pending_requirement
             session.data.pop("pending_requirement", None)
             session.data.pop("smart_prefill", None)
             session.step = ConversationStep.EMPLOYER_LOCATION
-            return self._reply(
-                sender_mobile,
-                f"✅ {service} requirement అర్థమైంది. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Job Location share చేయండి.",
-            )
-
+            return self._reply(sender_mobile, f"✅ {service} requirement అర్థమైంది. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Job Location share చేయండి.")
         session.data.pop("smart_prefill", None)
         session.step = ConversationStep.EMPLOYER_REQUIREMENT
-        return self._reply(
-            sender_mobile,
-            f"✅ {service} ఎంపిక చేశారు. దయచేసి మీ job requirement వివరాలు చెప్పండి.",
-        )
+        return self._reply(sender_mobile, f"✅ {service} ఎంపిక చేశారు. దయచేసి మీ job requirement వివరాలు చెప్పండి.")
