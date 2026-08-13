@@ -62,17 +62,7 @@ class RoleAwareConversationService(IntentAwareConversationService):
             and session.data.get("manage_roles")
         ):
             if normalized in self.ROLE_DONE_COMMANDS:
-                session.data.clear()
-                session.step = ConversationStep.MAIN_MENU
-                all_capabilities = self.user_repository.list_capabilities(sender_mobile)
-                selected = ", ".join(
-                    self.CAPABILITY_LABELS.get(item, item) for item in all_capabilities
-                ) or "None yet"
-                return self._reply(
-                    sender_mobile,
-                    f"✅ Manage Roles పూర్తైంది. మీ PODX roles: {selected}\n\n"
-                    + self._main_menu(),
-                )
+                return self._finish_manage_roles(sender_mobile, session)
 
             capabilities = self._parse_capabilities(clean_message)
             if not capabilities:
@@ -88,6 +78,13 @@ class RoleAwareConversationService(IntentAwareConversationService):
                 capabilities,
                 source="profile_manage",
             )
+
+            # A comma-separated batch is already a complete multi-role selection.
+            # A single numeric choice stays locked inside Manage Roles so the next
+            # number cannot accidentally trigger another workflow.
+            if len(capabilities) > 1:
+                return self._finish_manage_roles(sender_mobile, session)
+
             all_capabilities = self.user_repository.list_capabilities(sender_mobile)
             selected = ", ".join(
                 self.CAPABILITY_LABELS.get(item, item) for item in all_capabilities
@@ -100,3 +97,15 @@ class RoleAwareConversationService(IntentAwareConversationService):
             )
 
         return super().process(sender_mobile, clean_message)
+
+    def _finish_manage_roles(self, sender_mobile, session) -> str:
+        session.data.clear()
+        session.step = ConversationStep.MAIN_MENU
+        all_capabilities = self.user_repository.list_capabilities(sender_mobile)
+        selected = ", ".join(
+            self.CAPABILITY_LABELS.get(item, item) for item in all_capabilities
+        ) or "None yet"
+        return self._reply(
+            sender_mobile,
+            f"✅ మీ PODX roles update అయ్యాయి: {selected}\n\n" + self._main_menu(),
+        )
