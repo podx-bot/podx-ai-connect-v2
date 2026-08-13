@@ -8,9 +8,8 @@ class IntentRouterService:
     """Classify free-form PODX requests into stable product intents.
 
     Fast keyword rules handle common requests without an AI round trip. Gemini is
-    used only as a fallback for natural Telugu/English/Hindi phrasing. The router
-    never changes user/session data; callers decide whether an intent is safe to
-    execute in the current conversation step.
+    used only as a fallback for genuinely ambiguous phrasing. One client is reused
+    for fallback calls so connection setup is not paid on every message.
     """
 
     SUPPORTED_INTENTS = {
@@ -30,6 +29,7 @@ class IntentRouterService:
     def __init__(self, api_key: str, model: str = "gemini-3.6-flash") -> None:
         self.api_key = str(api_key or "").strip()
         self.model = str(model or "").strip() or "gemini-3.6-flash"
+        self._client = genai.Client(api_key=self.api_key) if self.api_key else None
 
     def classify(self, message: str) -> dict[str, Any]:
         text = " ".join(str(message or "").strip().split())
@@ -40,7 +40,7 @@ class IntentRouterService:
         if rule_intent:
             return {"intent": rule_intent, "source": "rules", "confidence": 1.0}
 
-        if not self.api_key:
+        if self._client is None:
             return {"intent": "UNKNOWN", "source": "no_ai_key", "confidence": 0.0}
 
         prompt = (
@@ -53,14 +53,14 @@ class IntentRouterService:
             "plumber, tailor/alteration, carpenter, repair, cleaning or other local service. "
             "SERVICE_PROVIDER = user offers/provides a local service. SHOP_PRODUCT = user wants "
             "to buy/find/check price or stock of a product. SELL_PRODUCT = user sells/offers/has "
-            "products for customers. Preserve meaning across Telugu, English, Hindi and mixed "
-            "speech. A specific profession/service request such as 'electrician కావాలి' or "
+            "products for customers. Preserve meaning across Indian languages and mixed speech. "
+            "Ignore wake words such as Hi PODX/Hey PODX when deciding the actual request. "
+            "A specific profession/service request such as 'electrician కావాలి' or "
             "'alteration కావాలి' is SERVICE unless the user explicitly says they want workers/staff.\n\n"
             f"Request: {text}"
         )
         try:
-            client = genai.Client(api_key=self.api_key)
-            interaction = client.interactions.create(
+            interaction = self._client.interactions.create(
                 model=self.model,
                 input=prompt,
                 store=False,
@@ -80,8 +80,22 @@ class IntentRouterService:
         return {"intent": "UNKNOWN", "source": "gemini_unknown", "confidence": 0.0}
 
     @staticmethod
+    def _normalize_for_rules(text: str) -> str:
+        lowered = " ".join(str(text or "").lower().split())
+        wake_patterns = (
+            r"^hi\s+podx[\s,.:;-]*",
+            r"^hey\s+podx[\s,.:;-]*",
+            r"^hello\s+podx[\s,.:;-]*",
+            r"^హాయ్\s+(?:podx|పోడక్స్|పోడెక్స్|ప్రోడక్స్)[\s,.:;-]*",
+            r"^హలో\s+(?:podx|పోడక్స్|పోడెక్స్|ప్రోడక్స్)[\s,.:;-]*",
+        )
+        for pattern in wake_patterns:
+            lowered = re.sub(pattern, "", lowered, count=1).strip()
+        return lowered
+
+    @staticmethod
     def _classify_rules(text: str) -> str | None:
-        lowered = text.lower()
+        lowered = IntentRouterService._normalize_for_rules(text)
 
         greeting_terms = {"hi", "hello", "hey", "హాయ్", "హలో", "नमस्ते", "हाय"}
         if lowered in greeting_terms:
@@ -138,8 +152,10 @@ class IntentRouterService:
             return "SELL_PRODUCT"
 
         service_terms = (
-            "electrician", "electrican", "electriction", "ఎలక్ట్రిషియన్", "ఎలక్ట్రిషన్",
-            "ఎలక్ట్రీషియన్", "ఎలక్ట్రీషన్", "plumber", "plumbing", "ప్లంబర్", "ప్లంబింగ్",
+            "electrician", "electrican", "electriction", "electrition", "electrician service",
+            "ఎలక్ట్రిషియన్", "ఎలక్ట్రిషన్", "ఎలక్ట్రీషియన్", "ఎలక్ట్రీషన్",
+            "ఎలక్ట్రిషియ‌న్", "ఎలక్ట్రీషియ‌న్", "ఎలక్ట్రిక్ పని", "ఎలక్ట్రికల్ పని",
+            "plumber", "plumbing", "ప్లంబర్", "ప్లంబింగ్",
             "ac technician", "ac repair", "ac service", "ఏసీ టెక్నీషియన్", "ఏసీ రిపేర్",
             "house cleaning", "home cleaning", "cleaning service", "క్లీనింగ్ సర్వీస్",
             "tailor", "tailoring", "alteration", "alterations", "dress alteration",
@@ -150,6 +166,11 @@ class IntentRouterService:
             "service కావాలి", "సర్వీస్ కావాలి", "సేవ కావాలి", "need service",
         )
         if any(term in lowered for term in service_terms):
+            return "SERVICE"
+
+        # STT engines sometimes produce a close electrician spelling. This bounded
+        # stem is deliberately checked only after provider/employer rules above.
+        if any(stem in lowered for stem in ("ఎలక్ట్రిష", "ఎలక్ట్రీష", "electrici", "electri")):
             return "SERVICE"
 
         driver_service_terms = (
