@@ -6,6 +6,8 @@ class MarketplaceConversationService(RoleAwareConversationService):
     """Handle seller and service-provider onboarding from natural language intents."""
 
     COMPLETION_SKIP_WORDS = {"skip", "later", "తెలియదు", "తర్వాత", "వద్దు", "n/a"}
+    CONFIRM_WORDS = {"1", "yes", "y", "ok", "okay", "correct", "అవును", "సరే", "కరెక్ట్"}
+    EDIT_WORDS = {"2", "edit", "change", "no", "n", "కాదు", "మార్చు", "ఎడిట్"}
 
     def __init__(
         self,
@@ -46,23 +48,27 @@ class MarketplaceConversationService(RoleAwareConversationService):
             price_text = None if normalized in self.COMPLETION_SKIP_WORDS else clean_message
             if price_text is not None and not price_text:
                 return self._reply(sender_mobile, "ధర పంపండి లేదా Skip పంపండి.")
-            area = (existing_user or {}).get("area") or (existing_user or {}).get("location_name")
-            self.marketplace_repository.save_seller_listing(
-                seller_mobile=sender_mobile,
-                product_name=session.data["product_name"],
-                price_text=price_text,
-                area=area,
-                source_message=session.data.get("source_message"),
-            )
-            self._record_capability(sender_mobile, "SELLER")
-            product_name = session.data["product_name"]
-            session.data.clear()
-            session.step = ConversationStep.MAIN_MENU
-            price_display = price_text or "Price later"
+            session.data["pending_price_text"] = price_text
+            session.step = ConversationStep.SELLER_CONFIRM
             return self._reply(
                 sender_mobile,
-                f"✅ Seller listing save అయింది.\nProduct: {product_name}\nPrice: {price_display}\nArea: {area or '-'}\n\n"
-                + self._main_menu(),
+                self._seller_confirmation_text(session.data["product_name"], price_text),
+            )
+
+        if registered and session.step == ConversationStep.SELLER_CONFIRM:
+            if normalized in self.CONFIRM_WORDS:
+                return self._save_seller_listing(sender_mobile, session, existing_user)
+            if normalized in self.EDIT_WORDS:
+                session.data.pop("product_name", None)
+                session.data.pop("pending_price_text", None)
+                session.step = ConversationStep.SELLER_PRODUCT_NAME
+                return self._reply(
+                    sender_mobile,
+                    "✏️ సరే. మళ్లీ మీరు అమ్మే product పేరు పంపండి.",
+                )
+            return self._reply(
+                sender_mobile,
+                "దయచేసి confirm చేయండి:\n1. Yes ✅\n2. Edit ✏️",
             )
 
         if registered and session.step == ConversationStep.SERVICE_PROVIDER_NAME:
@@ -79,23 +85,27 @@ class MarketplaceConversationService(RoleAwareConversationService):
             details = None if normalized in self.COMPLETION_SKIP_WORDS else clean_message
             if details is not None and not details:
                 return self._reply(sender_mobile, "Service details పంపండి లేదా Skip పంపండి.")
-            area = (existing_user or {}).get("area") or (existing_user or {}).get("location_name")
-            self.marketplace_repository.save_service_provider_profile(
-                provider_mobile=sender_mobile,
-                service_name=session.data["service_name"],
-                details=details,
-                area=area,
-                source_message=session.data.get("source_message"),
-            )
-            self._record_capability(sender_mobile, "SERVICE_PROVIDER")
-            service_name = session.data["service_name"]
-            session.data.clear()
-            session.step = ConversationStep.MAIN_MENU
-            details_display = details or "Details later"
+            session.data["pending_service_details"] = details
+            session.step = ConversationStep.SERVICE_PROVIDER_CONFIRM
             return self._reply(
                 sender_mobile,
-                f"✅ Service Provider profile save అయింది.\nService: {service_name}\nDetails: {details_display}\nArea: {area or '-'}\n\n"
-                + self._main_menu(),
+                self._provider_confirmation_text(session.data["service_name"], details),
+            )
+
+        if registered and session.step == ConversationStep.SERVICE_PROVIDER_CONFIRM:
+            if normalized in self.CONFIRM_WORDS:
+                return self._save_service_provider(sender_mobile, session, existing_user)
+            if normalized in self.EDIT_WORDS:
+                session.data.pop("service_name", None)
+                session.data.pop("pending_service_details", None)
+                session.step = ConversationStep.SERVICE_PROVIDER_NAME
+                return self._reply(
+                    sender_mobile,
+                    "✏️ సరే. మళ్లీ మీరు ఇచ్చే service పేరు పంపండి.",
+                )
+            return self._reply(
+                sender_mobile,
+                "దయచేసి confirm చేయండి:\n1. Yes ✅\n2. Edit ✏️",
             )
 
         if registered and session.step in {ConversationStep.START, ConversationStep.MAIN_MENU}:
@@ -119,3 +129,61 @@ class MarketplaceConversationService(RoleAwareConversationService):
                 )
 
         return super().process(sender_mobile, clean_message)
+
+    @staticmethod
+    def _seller_confirmation_text(product_name: str, price_text: str | None) -> str:
+        return (
+            "🔎 Save చేసే ముందు ఒకసారి check చేయండి.\n\n"
+            f"Product: {product_name}\n"
+            f"Price: {price_text or 'Price later'}\n\n"
+            "ఇవి సరైనవేనా?\n1. Yes ✅\n2. Edit ✏️"
+        )
+
+    @staticmethod
+    def _provider_confirmation_text(service_name: str, details: str | None) -> str:
+        return (
+            "🔎 Save చేసే ముందు ఒకసారి check చేయండి.\n\n"
+            f"Service: {service_name}\n"
+            f"Details: {details or 'Details later'}\n\n"
+            "ఇవి సరైనవేనా?\n1. Yes ✅\n2. Edit ✏️"
+        )
+
+    def _save_seller_listing(self, sender_mobile, session, existing_user) -> str:
+        area = (existing_user or {}).get("area") or (existing_user or {}).get("location_name")
+        product_name = session.data["product_name"]
+        price_text = session.data.get("pending_price_text")
+        self.marketplace_repository.save_seller_listing(
+            seller_mobile=sender_mobile,
+            product_name=product_name,
+            price_text=price_text,
+            area=area,
+            source_message=session.data.get("source_message"),
+        )
+        self._record_capability(sender_mobile, "SELLER")
+        session.data.clear()
+        session.step = ConversationStep.MAIN_MENU
+        return self._reply(
+            sender_mobile,
+            f"✅ Seller listing save అయింది.\nProduct: {product_name}\nPrice: {price_text or 'Price later'}\nArea: {area or '-'}\n\n"
+            + self._main_menu(),
+        )
+
+    def _save_service_provider(self, sender_mobile, session, existing_user) -> str:
+        area = (existing_user or {}).get("area") or (existing_user or {}).get("location_name")
+        service_name = session.data["service_name"]
+        details = session.data.get("pending_service_details")
+        self.marketplace_repository.save_service_provider_profile(
+            provider_mobile=sender_mobile,
+            service_name=service_name,
+            details=details,
+            area=area,
+            source_message=session.data.get("source_message"),
+        )
+        self._record_capability(sender_mobile, "SERVICE_PROVIDER")
+        session.data.clear()
+        session.step = ConversationStep.MAIN_MENU
+        return self._reply(
+            sender_mobile,
+            f"✅ Service Provider profile save అయింది.\nService: {service_name}\nDetails: {details or 'Details later'}\nArea: {area or '-'}\n\n"
+            + self._main_menu(),
+        )
