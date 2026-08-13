@@ -83,8 +83,17 @@ class MarketplaceConversationService(RoleAwareConversationService):
                 session.data["source_message"] = clean_message
                 session.step = ConversationStep.SERVICE_PROVIDER_NAME
                 return self._reply(sender_mobile, "🛠️ మీరు Service Providerగా add అవుతున్నారు.\n\nమీరు ఇచ్చే service పేరు పంపండి. ఉదాహరణ: Electrician, Plumbing, AC Repair.")
+            if intent == "UNKNOWN":
+                return self._reply(sender_mobile, self._clarification_prompt())
 
         return super().process(sender_mobile, clean_message)
+
+    @staticmethod
+    def _clarification_prompt() -> str:
+        return (
+            "🤔 మీ అవసరం పూర్తిగా అర్థం కాలేదు. ఇంకొంచెం స్పష్టంగా ఒక చిన్న వాక్యంలో చెప్పండి లేదా voice పంపండి.\n\n"
+            "ఉదా: Electrician కావాలి / Chicken కొనాలి / ఉద్యోగం కావాలి / workers కావాలి."
+        )
 
     @staticmethod
     def _main_menu() -> str:
