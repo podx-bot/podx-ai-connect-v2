@@ -16,7 +16,7 @@ from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
-from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoiceAssistantService
+from app.services.sarvam_tts_voice_assistant_service import SarvamTTSVoiceAssistantService
 from app.services.session_registry import SessionRegistry
 from app.whatsapp.whatsapp_service import WhatsAppService
 
@@ -61,7 +61,7 @@ class AppContainer:
             api_version=self.settings.whatsapp_api_version,
         )
         self.audio_codec_service = AudioCodecService()
-        self.voice_assistant_service = SarvamPrimaryVoiceAssistantService(
+        self.voice_assistant_service = SarvamTTSVoiceAssistantService(
             sarvam_api_key=self.settings.sarvam_api_key,
             sarvam_model=self.settings.sarvam_stt_model,
             sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,
