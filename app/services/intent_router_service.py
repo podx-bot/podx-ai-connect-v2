@@ -50,10 +50,12 @@ class IntentRouterService:
             "SERVICE_PROVIDER, SHOP_PRODUCT, SELL_PRODUCT, GREETING, UNKNOWN.\n"
             "JOB_SEEKER = user wants a job/work. EMPLOYER = user wants workers/staff. "
             "APPOINTMENT = doctor/salon/clinic booking. SERVICE = user needs an electrician, "
-            "repair, cleaning or other local service. SERVICE_PROVIDER = user offers/provides "
-            "a local service. SHOP_PRODUCT = user wants to buy/find/check price or stock of a "
-            "product. SELL_PRODUCT = user sells/offers/has products for customers. "
-            "Preserve meaning across Telugu, English, Hindi and mixed speech.\n\n"
+            "plumber, tailor/alteration, carpenter, repair, cleaning or other local service. "
+            "SERVICE_PROVIDER = user offers/provides a local service. SHOP_PRODUCT = user wants "
+            "to buy/find/check price or stock of a product. SELL_PRODUCT = user sells/offers/has "
+            "products for customers. Preserve meaning across Telugu, English, Hindi and mixed "
+            "speech. A specific profession/service request such as 'electrician కావాలి' or "
+            "'alteration కావాలి' is SERVICE unless the user explicitly says they want workers/staff.\n\n"
             f"Request: {text}"
         )
         try:
@@ -97,9 +99,6 @@ class IntentRouterService:
         if any(term in lowered for term in appointment_terms):
             return "APPOINTMENT"
 
-        # Explicit requests for the user's own work win before worker-hiring
-        # phrases. This prevents "delivery boy పని కావాలి" from being mistaken
-        # for an employer request merely because it contains "delivery boy".
         job_terms = (
             "ఉద్యోగం కావాలి", "పని కావాలి", "జాబ్ కావాలి", "job కావాలి",
             "need a job", "looking for job", "looking for work", "work కావాలి",
@@ -112,18 +111,17 @@ class IntentRouterService:
             "workers కావాలి", "worker కావాలి", "వర్కర్స్ కావాలి", "staff కావాలి",
             "మనుషులు కావాలి", "need workers", "need staff", "hire workers",
             "कर्मचारी चाहिए", "workers required", "delivery boy కావాలి",
-            "డెలివరీ బాయ్ కావాలి", "driver కావాలి", "డ్రైవర్ కావాలి",
+            "డెలివరీ బాయ్ కావాలి",
         )
         if any(term in lowered for term in employer_terms):
             return "EMPLOYER"
 
-        # Provider/seller rules intentionally run before customer/buyer rules.
-        # A phrase such as "నేను electrician service చేస్తాను" contains the word
-        # electrician but means the user provides the service, not needs it.
         service_provider_terms = (
             "service ఇస్తాను", "service చేస్తాను", "services ఇస్తాను", "services చేస్తాను",
             "సర్వీస్ ఇస్తాను", "సర్వీస్ చేస్తాను", "సేవ ఇస్తాను", "సేవలు ఇస్తాను",
-            "నేను electrician", "నేను ఎలక్ట్రిషియన్", "నేను plumber", "నేను ప్లంబర్",
+            "నేను electrician", "నేను ఎలక్ట్రిషియన్", "నేను ఎలక్ట్రీషియన్",
+            "నేను plumber", "నేను ప్లంబర్", "నేను tailor", "నేను టైలర్",
+            "నేను carpenter", "నేను కార్పెంటర్", "నేను painter", "నేను పెయింటర్",
             "i provide service", "i provide services", "i offer service", "service provider",
             "काम करता हूँ", "सेवा देता हूँ",
         )
@@ -140,11 +138,24 @@ class IntentRouterService:
             return "SELL_PRODUCT"
 
         service_terms = (
-            "electrician", "ఎలక్ట్రిషియన్", "plumber", "ప్లంబర్", "ac repair",
-            "ac service", "cleaning service", "క్లీనింగ్ సర్వీస్", "repair person",
+            "electrician", "electrican", "electriction", "ఎలక్ట్రిషియన్", "ఎలక్ట్రిషన్",
+            "ఎలక్ట్రీషియన్", "ఎలక్ట్రీషన్", "plumber", "plumbing", "ప్లంబర్", "ప్లంబింగ్",
+            "ac technician", "ac repair", "ac service", "ఏసీ టెక్నీషియన్", "ఏసీ రిపేర్",
+            "house cleaning", "home cleaning", "cleaning service", "క్లీనింగ్ సర్వీస్",
+            "tailor", "tailoring", "alteration", "alterations", "dress alteration",
+            "blouse alteration", "pant alteration", "shirt alteration", "stitching",
+            "టైలర్", "టైలరింగ్", "అల్టరేషన్", "ఆల్టరేషన్", "అల్టరేషన్స్", "కుట్టు పని",
+            "carpenter", "carpentry", "కార్పెంటర్", "వడ్రంగి", "painter", "painting service",
+            "పెయింటర్", "పెయింటింగ్", "mechanic", "మెకానిక్", "repair person",
             "service కావాలి", "సర్వీస్ కావాలి", "సేవ కావాలి", "need service",
         )
         if any(term in lowered for term in service_terms):
+            return "SERVICE"
+
+        driver_service_terms = (
+            "driver కావాలి", "డ్రైవర్ కావాలి", "need driver", "cab driver కావాలి",
+        )
+        if any(term in lowered for term in driver_service_terms):
             return "SERVICE"
 
         product_terms = (
