@@ -43,6 +43,9 @@ class EasyJobCommandService:
         clean = " ".join(str(message).strip().split())
         normalized = clean.lower()
 
+        if not self._could_be_easy_job_command(normalized):
+            return None
+
         pending_job_id = self._latest_pending_invitation(sender_mobile)
         if pending_job_id is not None:
             if normalized in self.ACCEPT_WORDS:
@@ -96,6 +99,17 @@ class EasyJobCommandService:
             (worker_mobile,),
         )
         return int(row["employer_job_id"]) if row else None
+
+    def _could_be_easy_job_command(self, normalized: str) -> bool:
+        if normalized in self.ACCEPT_WORDS or normalized in self.REJECT_WORDS:
+            return True
+        lifecycle_phrases = (
+            self.ONWAY_PHRASES
+            + self.ARRIVED_PHRASES
+            + self.START_PHRASES
+            + self.COMPLETE_PHRASES
+        )
+        return self._contains_any(normalized, lifecycle_phrases)
 
     @staticmethod
     def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
