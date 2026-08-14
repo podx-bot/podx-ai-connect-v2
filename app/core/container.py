@@ -152,11 +152,19 @@ class AppContainer:
     def _resolve_universal_contact(self, user_id: str):
         user = self.user_repository.find_by_whatsapp_mobile(str(user_id)) or {}
         if not user:
-            return {"mobile": str(user_id), "name": "PODX User"}
+            return {"mobile": str(user_id), "phone": str(user_id), "name": "PODX User"}
+
+        # For outbound WhatsApp delivery always prefer the WhatsApp-addressable
+        # number captured from Meta webhooks (normally includes country code).
+        # entered_mobile may be a local 10-digit profile/contact number and is not
+        # guaranteed to be a valid WhatsApp API recipient identifier.
+        whatsapp_mobile = str(user.get("whatsapp_mobile") or user_id)
+        entered_mobile = str(user.get("entered_mobile") or whatsapp_mobile)
         return {
             **user,
-            "mobile": user.get("entered_mobile") or user.get("whatsapp_mobile") or str(user_id),
-            "phone": user.get("entered_mobile") or user.get("whatsapp_mobile") or str(user_id),
+            "mobile": whatsapp_mobile,
+            "phone": entered_mobile,
+            "whatsapp_mobile": whatsapp_mobile,
             "name": user.get("name") or "PODX User",
         }
 
