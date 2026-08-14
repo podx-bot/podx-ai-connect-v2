@@ -19,15 +19,13 @@ class UniversalImageService:
         "sell", "selling", "have", "offer", "అమ్మాలి", "అమ్ముతాను", "నా దగ్గర ఉంది",
         "ఇస్తాను", "bechna", "bechunga", "available",
     }
-    DEFAULT_IMAGE_MODEL = "gemini-2.5-flash"
-    IMAGE_MODEL_FALLBACKS = ("gemini-2.5-flash", "gemini-2.0-flash")
+    # Image understanding is intentionally isolated from the shared voice model setting.
+    # A voice model value may be valid for audio but unavailable for multimodal image calls.
+    IMAGE_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
 
     def __init__(self, api_key: str, model: str, pending_repository,
                  live_capture_service, client: Any | None = None) -> None:
-        configured = str(model or "").strip()
-        # Voice/TTS configuration is shared by the container, but image understanding
-        # must never depend on a preview/unsupported voice model name.
-        self.model = configured if configured and "tts" not in configured.casefold() else self.DEFAULT_IMAGE_MODEL
+        self.model = self.IMAGE_MODELS[0]
         self.pending = pending_repository
         self.live = live_capture_service
         self.client = client or (genai.Client(api_key=api_key) if api_key else None)
@@ -43,13 +41,7 @@ class UniversalImageService:
         prompt = self._prompt(caption)
         payload = None
         last_error = None
-        models = []
-        for candidate in (self.model, *self.IMAGE_MODEL_FALLBACKS):
-            candidate = str(candidate or "").strip()
-            if candidate and candidate not in models:
-                models.append(candidate)
-
-        for model in models:
+        for model in self.IMAGE_MODELS:
             try:
                 response = self.client.models.generate_content(
                     model=model,
@@ -60,22 +52,21 @@ class UniversalImageService:
                             mime_type=mime_type or "image/jpeg",
                         ),
                     ],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                    ),
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
                 raw = str(getattr(response, "text", "") or "").strip()
                 payload = self._parse_json(raw)
+                print(f"PODX IMAGE AI SUCCESS: model={model}", flush=True)
                 break
             except Exception as error:
                 last_error = error
+                print(
+                    f"PODX IMAGE AI MODEL FAILED: model={model} "
+                    f"error={type(error).__name__}: {error}",
+                    flush=True,
+                )
 
         if payload is None:
-            print(
-                "PODX IMAGE AI ERROR: "
-                f"models={models} error={type(last_error).__name__ if last_error else 'unknown'}: {last_error}",
-                flush=True,
-            )
             return "Photo అర్థం చేసుకోవడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ పంపండి లేదా చిన్న caption పెట్టండి."
 
         subject = " ".join(str(payload.get("subject") or "").strip().split())
@@ -139,7 +130,8 @@ class UniversalImageService:
         cap = str(caption or "").strip()
         return (
             "You are PODX visual understanding. Analyze the attached photo/screenshot. "
-            "Return exactly one JSON object, no markdown. Identify the physical product/material/service/work subject visible. "
+            "Return exactly one JSON object, no markdown. Read visible product labels/text when possible and use them for the subject. "
+            "Identify the physical product/material/service/work subject visible. "
             "Use caption to infer user intent. If caption clearly means wants/buys/needs, side=NEED. "
             "If caption clearly means sells/has/offers/provides, side=OFFER. If intent is not clear, side=UNKNOWN. "
             "Do not invent brand/model/price/quantity that is not visible or stated.\n"
