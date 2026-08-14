@@ -21,8 +21,12 @@ from app.services.marketplace_conversation_service import MarketplaceConversatio
 from app.services.sarvam_tts_voice_assistant_service import SarvamTTSVoiceAssistantService
 from app.services.session_registry import SessionRegistry
 from app.services.universal_aware_conversation_service import UniversalAwareConversationService
+from app.services.universal_live_capture_service import UniversalLiveCaptureService
+from app.services.universal_matcher import UniversalMatcher
 from app.services.universal_notification_service import UniversalNotificationService
+from app.services.universal_request_extractor import UniversalRequestExtractor
 from app.services.universal_response_command_service import UniversalResponseCommandService
+from app.services.universal_targeting_service import UniversalTargetingService
 from app.whatsapp.whatsapp_service import WhatsAppService
 
 
@@ -78,8 +82,29 @@ class AppContainer:
             notification_service=self.universal_notification_service,
             notification_repository=self.universal_notification_repository,
         )
+        self.universal_request_extractor = UniversalRequestExtractor(
+            api_key=self.settings.gemini_api_key,
+            model=self.settings.gemini_voice_model,
+        )
+        self.universal_matcher = UniversalMatcher(self.universal_demand_repository)
+        self.universal_targeting_service = UniversalTargetingService(
+            profile_source=self._universal_profiles,
+            subject_similarity=UniversalMatcher._subject_similarity,
+            distance_km=UniversalMatcher._distance_km,
+        )
+        self.universal_live_capture_service = UniversalLiveCaptureService(
+            extractor=self.universal_request_extractor,
+            demand_repository=self.universal_demand_repository,
+            matcher=self.universal_matcher,
+            targeting_service=self.universal_targeting_service,
+            notification_service=self.universal_notification_service,
+            notification_repository=self.universal_notification_repository,
+            user_repository=self.user_repository,
+            session_registry=self.session_registry,
+        )
         self.conversation_service = UniversalAwareConversationService(
             response_commands=self.universal_response_command_service,
+            live_capture=self.universal_live_capture_service,
             base_conversation=self.base_conversation_service,
         )
 
@@ -121,6 +146,66 @@ class AppContainer:
             "phone": user.get("entered_mobile") or user.get("whatsapp_mobile") or str(user_id),
             "name": user.get("name") or "PODX User",
         }
+
+    def _universal_profiles(self):
+        """Combine registered users, seller listings and service profiles for targeting."""
+        profiles = []
+        user_rows = self.database.fetchall("SELECT * FROM users WHERE registration_complete = 1")
+        users = {str(row["whatsapp_mobile"]): dict(row) for row in user_rows}
+
+        for mobile, user in users.items():
+            capabilities = self.user_repository.list_capabilities(mobile)
+            role = str(user.get("role") or "").upper()
+            if not role and capabilities:
+                role = "BOTH" if len(capabilities) > 1 else str(capabilities[0]).upper()
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": role,
+                    "category": user.get("job_category"),
+                    "skill": user.get("job_category"),
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
+
+        seller_rows = self.database.fetchall(
+            "SELECT seller_mobile, product_name FROM seller_listings WHERE status = 'ACTIVE'"
+        )
+        seller_products = {}
+        for row in seller_rows:
+            mobile = str(row["seller_mobile"])
+            seller_products.setdefault(mobile, []).append(row["product_name"])
+        for mobile, products in seller_products.items():
+            user = users.get(mobile, {})
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": "SELLER",
+                    "products": products,
+                    "category": " ".join(str(x) for x in products[:5]),
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
+
+        provider_rows = self.database.fetchall(
+            "SELECT provider_mobile, service_name FROM service_provider_profiles WHERE status = 'ACTIVE'"
+        )
+        for row in provider_rows:
+            mobile = str(row["provider_mobile"])
+            user = users.get(mobile, {})
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": "SERVICE_PROVIDER",
+                    "service": row["service_name"],
+                    "category": row["service_name"],
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
+        return profiles
 
     def close(self) -> None:
         self.database.close()
