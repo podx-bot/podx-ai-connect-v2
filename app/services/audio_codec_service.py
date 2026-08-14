@@ -64,6 +64,17 @@ class AudioCodecService:
         if not pcm_bytes:
             return {"success": False, "status": "EMPTY_PCM"}
 
+        if pcm_bytes.startswith(b"OggS"):
+            return {
+                "success": True,
+                "status": "ALREADY_OGG_OPUS",
+                "content": pcm_bytes,
+                "mime_type": "audio/ogg",
+                "file_name": "podx-reply.ogg",
+                "conversion_ms": 0,
+                "conversion_bypass": True,
+            }
+
         started = time.perf_counter()
         try:
             command = [
@@ -134,4 +145,5 @@ class AudioCodecService:
             "mime_type": "audio/ogg",
             "file_name": "podx-reply.ogg",
             "conversion_ms": conversion_ms,
+            "conversion_bypass": False,
         }
