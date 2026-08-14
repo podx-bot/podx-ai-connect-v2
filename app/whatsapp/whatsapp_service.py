@@ -45,6 +45,18 @@ class WhatsAppService:
         clean = "".join(c for c in str(recipient_mobile) if c.isdigit())
         return self._send_with_retry({"messaging_product": "whatsapp", "recipient_type": "individual", "to": clean, "type": "text", "text": {"preview_url": False, "body": str(message).strip()}})
 
+    def send_image_by_id(self, recipient_mobile: str, media_id: str, caption: str = "") -> dict[str, Any]:
+        """Send a previously received/uploaded WhatsApp media image as a tappable full-size product image."""
+        clean = "".join(c for c in str(recipient_mobile) if c.isdigit())
+        image_id = str(media_id or "").strip()
+        if not image_id:
+            return {"success": False, "status": "MEDIA_ID_MISSING", "attempts": 0}
+        image: dict[str, Any] = {"id": image_id}
+        clean_caption = str(caption or "").strip()
+        if clean_caption:
+            image["caption"] = clean_caption[:1024]
+        return self._send_with_retry({"messaging_product": "whatsapp", "recipient_type": "individual", "to": clean, "type": "image", "image": image})
+
     def send_reply_buttons(self, recipient_mobile: str, body: str, buttons: list[dict[str, str]]) -> dict[str, Any]:
         """Send up to 3 WhatsApp reply buttons. IDs carry internal commands; titles are user-friendly."""
         clean = "".join(c for c in str(recipient_mobile) if c.isdigit())
