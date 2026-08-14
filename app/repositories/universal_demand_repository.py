@@ -55,6 +55,9 @@ class UniversalDemandRepository:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_universal_domain_status ON universal_demands(domain, status)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_universal_user_status ON universal_demands(user_id, status)"
+            )
 
     def create(self, record: Dict[str, Any]) -> int:
         now = datetime.now(timezone.utc).isoformat()
@@ -86,6 +89,41 @@ class UniversalDemandRepository:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM universal_demands WHERE id = ?", (demand_id,)).fetchone()
         return self._row(row) if row else None
+
+    def latest_active_for_user_missing_location(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM universal_demands
+                WHERE user_id = ?
+                  AND status = 'ACTIVE'
+                  AND latitude IS NULL
+                  AND longitude IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(user_id),),
+            ).fetchone()
+        return self._row(row) if row else None
+
+    def update_location(
+        self,
+        demand_id: int,
+        latitude: float,
+        longitude: float,
+        location_text: Optional[str] = None,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE universal_demands
+                SET latitude = ?, longitude = ?, location_text = COALESCE(?, location_text), updated_at = ?
+                WHERE id = ?
+                """,
+                (float(latitude), float(longitude), location_text, now, int(demand_id)),
+            )
 
     def list_active(self, limit: int = 500, exclude_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         sql = "SELECT * FROM universal_demands WHERE status = 'ACTIVE'"
