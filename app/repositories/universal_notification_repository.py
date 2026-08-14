@@ -1,4 +1,4 @@
-"""Persistence for universal targeted notifications and consent/contact lifecycle."""
+"""Persistence for universal targeted notifications and lead-conversion lifecycle."""
 
 from __future__ import annotations
 
@@ -48,12 +48,28 @@ class UniversalNotificationRepository:
                     responder_status TEXT NOT NULL DEFAULT 'INTERESTED',
                     requester_status TEXT NOT NULL DEFAULT 'PENDING',
                     contact_shared INTEGER NOT NULL DEFAULT 0,
+                    qualification_status TEXT NOT NULL DEFAULT 'NEW',
+                    delivery_address TEXT,
+                    converted_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(request_id, responder_user_id)
                 );
                 """
             )
+            # Safe migration for databases created before Lead Conversion V1.
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(universal_interests)").fetchall()
+            }
+            if "qualification_status" not in columns:
+                conn.execute(
+                    "ALTER TABLE universal_interests ADD COLUMN qualification_status TEXT NOT NULL DEFAULT 'NEW'"
+                )
+            if "delivery_address" not in columns:
+                conn.execute("ALTER TABLE universal_interests ADD COLUMN delivery_address TEXT")
+            if "converted_at" not in columns:
+                conn.execute("ALTER TABLE universal_interests ADD COLUMN converted_at TEXT")
 
     @staticmethod
     def _now() -> str:
@@ -121,8 +137,8 @@ class UniversalNotificationRepository:
                 INSERT INTO universal_interests (
                     request_id, requester_user_id, responder_user_id,
                     responder_status, requester_status, contact_shared,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, 'INTERESTED', 'PENDING', 0, ?, ?)
+                    qualification_status, created_at, updated_at
+                ) VALUES (?, ?, ?, 'INTERESTED', 'PENDING', 0, 'NEW', ?, ?)
                 ON CONFLICT(request_id, responder_user_id) DO UPDATE SET
                     responder_status='INTERESTED', updated_at=excluded.updated_at
                 """,
@@ -136,20 +152,37 @@ class UniversalNotificationRepository:
 
     def set_requester_consent(self, request_id: int, responder_user_id: str, accepted: bool) -> None:
         status = "ACCEPTED" if accepted else "REJECTED"
+        qualification = "WAITING_ADDRESS" if accepted else "DECLINED"
         with self._connect() as conn:
             conn.execute(
                 """
-                UPDATE universal_interests SET requester_status=?, updated_at=?
+                UPDATE universal_interests
+                SET requester_status=?, qualification_status=?, updated_at=?
                 WHERE request_id=? AND responder_user_id=?
                 """,
-                (status, self._now(), int(request_id), str(responder_user_id)),
+                (status, qualification, self._now(), int(request_id), str(responder_user_id)),
+            )
+
+    def save_delivery_address(self, request_id: int, responder_user_id: str, address: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE universal_interests
+                SET delivery_address=?, qualification_status='QUALIFIED', converted_at=?, updated_at=?
+                WHERE request_id=? AND responder_user_id=? AND requester_status='ACCEPTED'
+                """,
+                (
+                    str(address).strip(), self._now(), self._now(),
+                    int(request_id), str(responder_user_id),
+                ),
             )
 
     def mark_contact_shared(self, request_id: int, responder_user_id: str) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                UPDATE universal_interests SET contact_shared=1, updated_at=?
+                UPDATE universal_interests
+                SET contact_shared=1, updated_at=?
                 WHERE request_id=? AND responder_user_id=?
                 """,
                 (self._now(), int(request_id), str(responder_user_id)),
@@ -202,5 +235,37 @@ class UniversalNotificationRepository:
                 LIMIT 1
                 """,
                 (str(requester_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def latest_waiting_address_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM universal_interests
+                WHERE responder_user_id=?
+                  AND responder_status='INTERESTED'
+                  AND requester_status='ACCEPTED'
+                  AND qualification_status='WAITING_ADDRESS'
+                  AND contact_shared=0
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(responder_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def latest_qualified_interest_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM universal_interests
+                WHERE responder_user_id=?
+                  AND requester_status='ACCEPTED'
+                  AND qualification_status='QUALIFIED'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(responder_user_id),),
             ).fetchone()
         return dict(row) if row else None
