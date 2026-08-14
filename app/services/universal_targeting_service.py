@@ -7,7 +7,8 @@ that the delivery layer can execute safely.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+import re
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Iterable, List
 
 
@@ -31,6 +32,10 @@ class UniversalTargetingService:
     """
 
     DEFAULT_RADII_KM = (5.0, 15.0, 30.0, 50.0)
+    GENERIC_PROFILE_WORDS = {
+        "and", "or", "the", "a", "an", "shop", "store", "business", "seller",
+        "provider", "service", "services", "worker", "workers", "product", "products",
+    }
 
     def __init__(
         self,
@@ -132,8 +137,31 @@ class UniversalTargetingService:
             products = [products]
         texts.extend(products)
 
-        scores = [self.subject_similarity(request_subject, text) for text in texts if text]
-        return max(scores) if scores else 0.0
+        best = 0.0
+        request_tokens = self._meaningful_tokens(request_subject)
+        for text in texts:
+            if not text:
+                continue
+            semantic_score = float(self.subject_similarity(request_subject, text) or 0.0)
+            profile_tokens = self._meaningful_tokens(text)
+            shared = request_tokens & profile_tokens
+
+            # A profile may be relevant even when it has not listed the exact item.
+            # Example: "sona masoori rice" should reach a registered "rice grocery"
+            # seller because the concrete shared business term is "rice".
+            token_score = 0.0
+            if shared:
+                coverage = len(shared) / max(1, min(len(request_tokens), len(profile_tokens)))
+                token_score = min(0.75, 0.42 + (0.25 * coverage))
+
+            best = max(best, semantic_score, token_score)
+        return best
+
+    @classmethod
+    def _meaningful_tokens(cls, value: Any) -> set[str]:
+        text = str(value or "").casefold()
+        tokens = set(re.findall(r"[\w]+", text, flags=re.UNICODE))
+        return {token for token in tokens if len(token) >= 2 and token not in cls.GENERIC_PROFILE_WORDS}
 
     @staticmethod
     def _role_compatible(request: Dict[str, Any], profile: Dict[str, Any]) -> bool:
