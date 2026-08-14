@@ -11,8 +11,8 @@ class _FakeStreamResponse:
         return False
 
     def iter_bytes(self):
-        yield b"pcm-one"
-        yield b"pcm-two"
+        yield b"OggS"
+        yield b"direct-opus-audio"
 
 
 class _FakePersistentClient:
@@ -36,7 +36,7 @@ def test_tts_reuses_existing_sarvam_http_client():
     result = service._synthesize_sarvam("మీకు సహాయం చేస్తాను")
 
     assert result["success"] is True
-    assert result["content"] == b"pcm-onepcm-two"
+    assert result["content"] == b"OggSdirect-opus-audio"
     assert len(fake_client.calls) == 1
     method, url, kwargs = fake_client.calls[0]
     assert method == "POST"
