@@ -209,6 +209,12 @@ class IntentAwareConversationService(ConversationService):
         if normalized in {"menu", "main menu", "మెను", "మెనూ"}:
             return None
 
+        if (
+            detected_intent in self.CLEAR_MENU_INTERRUPT_INTENTS
+            and detected_intent != "JOB_SEEKER"
+        ):
+            return None
+
         category = self.CATEGORY_MAP.get(normalized)
         if category is None:
             category = self.smart_job_message_service.extract(message).get("category")
