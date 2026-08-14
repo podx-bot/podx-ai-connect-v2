@@ -2,6 +2,10 @@
 
 This repository intentionally stays domain-neutral: work, workers, services,
 products and future request types use the same storage model.
+
+Important: this storage uses its own table name. The older DemandRepository
+already owns `universal_demands` with a different schema, so sharing that table
+causes startup failures on both fresh and existing databases.
 """
 
 from __future__ import annotations
@@ -13,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 
 class UniversalDemandRepository:
+    TABLE = "universal_need_offer_records"
+
     def __init__(self, db_path: str = "podx.db") -> None:
         self.db_path = db_path
         self._ensure_schema()
@@ -25,8 +31,8 @@ class UniversalDemandRepository:
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
             conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS universal_demands (
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT NOT NULL,
                     side TEXT NOT NULL,
@@ -40,7 +46,7 @@ class UniversalDemandRepository:
                     latitude REAL,
                     longitude REAL,
                     location_text TEXT,
-                    constraints_json TEXT NOT NULL DEFAULT '{}',
+                    constraints_json TEXT NOT NULL DEFAULT '{{}}',
                     source TEXT NOT NULL DEFAULT 'text',
                     media_ref TEXT,
                     status TEXT NOT NULL DEFAULT 'ACTIVE',
@@ -50,13 +56,13 @@ class UniversalDemandRepository:
                 """
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_universal_side_status ON universal_demands(side, status)"
+                f"CREATE INDEX IF NOT EXISTS idx_need_offer_side_status ON {self.TABLE}(side, status)"
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_universal_domain_status ON universal_demands(domain, status)"
+                f"CREATE INDEX IF NOT EXISTS idx_need_offer_domain_status ON {self.TABLE}(domain, status)"
             )
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_universal_user_status ON universal_demands(user_id, status)"
+                f"CREATE INDEX IF NOT EXISTS idx_need_offer_user_status ON {self.TABLE}(user_id, status)"
             )
 
     def create(self, record: Dict[str, Any]) -> int:
@@ -64,8 +70,8 @@ class UniversalDemandRepository:
         constraints = record.get("constraints") or {}
         with self._connect() as conn:
             cur = conn.execute(
-                """
-                INSERT INTO universal_demands (
+                f"""
+                INSERT INTO {self.TABLE} (
                     user_id, side, domain, subject, quantity, unit, price,
                     currency, when_text, latitude, longitude, location_text,
                     constraints_json, source, media_ref, status, created_at, updated_at
@@ -87,15 +93,17 @@ class UniversalDemandRepository:
 
     def get(self, demand_id: int) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM universal_demands WHERE id = ?", (demand_id,)).fetchone()
+            row = conn.execute(
+                f"SELECT * FROM {self.TABLE} WHERE id = ?", (demand_id,)
+            ).fetchone()
         return self._row(row) if row else None
 
     def latest_active_for_user_missing_location(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT *
-                FROM universal_demands
+                FROM {self.TABLE}
                 WHERE user_id = ?
                   AND status = 'ACTIVE'
                   AND latitude IS NULL
@@ -117,8 +125,8 @@ class UniversalDemandRepository:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
-                """
-                UPDATE universal_demands
+                f"""
+                UPDATE {self.TABLE}
                 SET latitude = ?, longitude = ?, location_text = COALESCE(?, location_text), updated_at = ?
                 WHERE id = ?
                 """,
@@ -126,7 +134,7 @@ class UniversalDemandRepository:
             )
 
     def list_active(self, limit: int = 500, exclude_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        sql = "SELECT * FROM universal_demands WHERE status = 'ACTIVE'"
+        sql = f"SELECT * FROM {self.TABLE} WHERE status = 'ACTIVE'"
         params: List[Any] = []
         if exclude_user_id is not None:
             sql += " AND user_id <> ?"
@@ -139,7 +147,7 @@ class UniversalDemandRepository:
 
     def list_opposite_active(self, side: str, domain: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         opposite = "OFFER" if str(side).upper() == "NEED" else "NEED"
-        sql = "SELECT * FROM universal_demands WHERE side = ? AND status = 'ACTIVE'"
+        sql = f"SELECT * FROM {self.TABLE} WHERE side = ? AND status = 'ACTIVE'"
         params: List[Any] = [opposite]
         if domain:
             sql += " AND domain = ?"
@@ -154,7 +162,7 @@ class UniversalDemandRepository:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
-                "UPDATE universal_demands SET status = ?, updated_at = ? WHERE id = ?",
+                f"UPDATE {self.TABLE} SET status = ?, updated_at = ? WHERE id = ?",
                 (status.upper(), now, demand_id),
             )
 
