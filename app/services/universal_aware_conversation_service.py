@@ -1,24 +1,29 @@
-"""Thin live adapter that gives Universal Flow response commands precedence.
-
-Keeping this wrapper separate avoids invasive webhook changes while allowing both
-text and transcribed voice messages to use the same response path.
-"""
+"""Thin live adapter for Universal Flow responses and natural requirement capture."""
 
 from __future__ import annotations
 
 
 class UniversalAwareConversationService:
-    def __init__(self, response_commands, base_conversation) -> None:
+    def __init__(self, response_commands, live_capture, base_conversation) -> None:
         self.response_commands = response_commands
+        self.live_capture = live_capture
         self.base_conversation = base_conversation
 
     def process(self, sender_mobile: str, message: str) -> str:
-        universal_reply = self.response_commands.process_text(
+        response_reply = self.response_commands.process_text(
             sender_mobile=sender_mobile,
             message=message,
         )
-        if universal_reply is not None:
-            return universal_reply
+        if response_reply is not None:
+            return response_reply
+
+        capture_reply = self.live_capture.process_text(
+            sender_mobile=sender_mobile,
+            message=message,
+        )
+        if capture_reply is not None:
+            return capture_reply
+
         return self.base_conversation.process(
             sender_mobile=sender_mobile,
             message=message,
