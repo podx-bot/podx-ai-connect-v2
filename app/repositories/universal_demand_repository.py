@@ -73,7 +73,7 @@ class UniversalDemandRepository:
                     str(record.get("domain") or "OTHER").upper(),
                     str(record["subject"]).strip(), record.get("quantity"),
                     record.get("unit"), record.get("price"),
-                    record.get("currency"), record.get("when"),
+                    record.get("currency"), record.get("when") or record.get("when_text"),
                     record.get("latitude"), record.get("longitude"),
                     record.get("location_text"), json.dumps(constraints, ensure_ascii=False),
                     record.get("source") or "text", record.get("media_ref"),
@@ -86,6 +86,18 @@ class UniversalDemandRepository:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM universal_demands WHERE id = ?", (demand_id,)).fetchone()
         return self._row(row) if row else None
+
+    def list_active(self, limit: int = 500, exclude_user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM universal_demands WHERE status = 'ACTIVE'"
+        params: List[Any] = []
+        if exclude_user_id is not None:
+            sql += " AND user_id <> ?"
+            params.append(str(exclude_user_id))
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row(row) for row in rows]
 
     def list_opposite_active(self, side: str, domain: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
         opposite = "OFFER" if str(side).upper() == "NEED" else "NEED"
