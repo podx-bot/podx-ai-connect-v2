@@ -10,6 +10,8 @@ class UniversalLiveCaptureService:
     COMMAND_PREFIXES = (
         "status ", "accept ", "confirm ", "decline ", "reject ", "cancel ",
         "interested ", "start ", "complete ", "arrived ", "manage ",
+        "buy_interested ", "buy_not_interested ", "seller_confirm ",
+        "seller_decline ", "order_continue ", "direct_talk ",
     )
 
     def __init__(self, extractor, demand_repository, matcher, targeting_service,
@@ -104,15 +106,19 @@ class UniversalLiveCaptureService:
             sent = int(delivery.get("sent") or 0)
             failed = int(delivery.get("failed") or 0)
             skipped = int(delivery.get("skipped_duplicate") or 0)
+            side = str(request.get("side") or "").upper()
             if sent > 0:
-                return (f"{prefix}✅ {len(matches)} సరైన match{'es' if len(matches) != 1 else ''} దొరికాయి. "
-                        f"వారిలో {sent} మందికి notification పంపాను. ఎవరైనా interested అంటే వెంటనే మీకు చెప్తాను.")
+                if side == "NEED":
+                    return (f"{prefix}✅ {len(matches)} seller match{'es' if len(matches) != 1 else ''} దొరికాయి. "
+                            f"{sent} option{'s' if sent != 1 else ''} మీకు పంపాను. నచ్చిన sellerపై 'ఆసక్తి ఉంది' నొక్కండి.")
+                return (f"{prefix}✅ {len(matches)} buyer match{'es' if len(matches) != 1 else ''} దొరికాయి. "
+                        f"{sent} buyer{'s' if sent != 1 else ''}కి మీ offer పంపాను. Buyer ఆసక్తి చూపితే మీకు Confirm వస్తుంది.")
             if failed > 0:
                 return (f"{prefix}✅ సరైన match దొరికింది, కానీ WhatsApp notification delivery ప్రస్తుతం fail అయింది. "
                         "మీ request ACTIVEగా ఉంది; deliveryని మళ్లీ ప్రయత్నించవచ్చు.")
             if skipped > 0:
-                return (f"{prefix}✅ సరైన match ఇప్పటికే ఈ requestకి contact/notify చేయబడింది. "
-                        "మీ request ACTIVEగా ఉంది; వారి response కోసం చూస్తున్నాను.")
+                return (f"{prefix}✅ ఈ match options ఇప్పటికే పంపబడ్డాయి. "
+                        "మీ request ACTIVEగా ఉంది; response కోసం చూస్తున్నాను.")
             return (f"{prefix}మీ request ACTIVEగా ఉంచాను. Match record ఉంది కానీ కొత్త eligible recipient లేదు. "
                     "కొత్త match దొరికిన వెంటనే WhatsAppలో చెప్తాను.")
 
@@ -123,8 +129,12 @@ class UniversalLiveCaptureService:
             sent = int(delivery.get("sent") or 0)
             failed = int(delivery.get("failed") or 0)
             if sent > 0:
-                return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {plan.get('total_targets', 0)} మందిని గుర్తించాను; "
-                        f"{sent} మందికి request పంపాను. Response వచ్చిన వెంటనే మీకు చెప్తాను.")
+                side = str(request.get("side") or "").upper()
+                if side == "NEED":
+                    return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ {sent} relevant seller option{'s' if sent != 1 else ''} "
+                            "మీకు పంపాను. Interested sellerని select చేయండి.")
+                return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {sent} buyer{'s' if sent != 1 else ''}కి "
+                        "మీ offer పంపాను. Response వచ్చిన వెంటనే మీకు చెప్తాను.")
             if failed > 0:
                 return (f"{prefix}సంబంధిత users దొరికారు, కానీ WhatsApp delivery ప్రస్తుతం fail అయింది. "
                         "మీ request ACTIVEగా ఉంచాను.")
