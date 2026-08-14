@@ -196,6 +196,6 @@ def test_universal_aware_adapter_order_is_response_then_capture_then_base():
             calls.append("base")
             return "base"
 
-    service = UniversalAwareConversationService(Responses(), Capture(), Base())
+    service = UniversalAwareConversationService(Responses(), Base(), live_capture=Capture())
     assert service.process("1", "need rice") == "captured"
     assert calls == ["response", "capture"]
