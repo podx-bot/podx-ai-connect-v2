@@ -20,6 +20,7 @@ from app.services.job_matching_service import JobMatchingService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
 from app.services.sarvam_tts_voice_assistant_service import SarvamTTSVoiceAssistantService
 from app.services.session_registry import SessionRegistry
+from app.services.universal_aware_conversation_service import UniversalAwareConversationService
 from app.services.universal_notification_service import UniversalNotificationService
 from app.services.universal_response_command_service import UniversalResponseCommandService
 from app.whatsapp.whatsapp_service import WhatsAppService
@@ -53,7 +54,7 @@ class AppContainer:
             repository=self.appointment_repository,
             session_registry=self.session_registry,
         )
-        self.conversation_service = MarketplaceConversationService(
+        self.base_conversation_service = MarketplaceConversationService(
             user_repository=self.user_repository,
             session_registry=self.session_registry,
             intent_router=self.intent_router_service,
@@ -76,6 +77,10 @@ class AppContainer:
             demand_repository=self.universal_demand_repository,
             notification_service=self.universal_notification_service,
             notification_repository=self.universal_notification_repository,
+        )
+        self.conversation_service = UniversalAwareConversationService(
+            response_commands=self.universal_response_command_service,
+            base_conversation=self.base_conversation_service,
         )
 
         self.audio_codec_service = AudioCodecService()
