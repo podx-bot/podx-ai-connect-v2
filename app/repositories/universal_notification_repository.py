@@ -1,4 +1,12 @@
-"""Persistence for universal targeted notifications and lead-conversion lifecycle."""
+"""Persistence for universal targeted notifications and lead-conversion lifecycle.
+
+Lead-conversion role convention (independent of who created the original
+NEED/OFFER record):
+- universal_interests.requester_user_id stores the BUYER user id.
+- universal_interests.responder_user_id stores the SELLER user id.
+- requester_status is retained for backward-compatible schema reasons, but it
+  represents the SELLER decision (PENDING/ACCEPTED/REJECTED).
+"""
 
 from __future__ import annotations
 
@@ -57,7 +65,6 @@ class UniversalNotificationRepository:
                 );
                 """
             )
-            # Safe migration for databases created before Lead Conversion V1.
             columns = {
                 str(row["name"])
                 for row in conn.execute("PRAGMA table_info(universal_interests)").fetchall()
@@ -129,7 +136,8 @@ class UniversalNotificationRepository:
             ).fetchall()
         return [str(row["target_user_id"]) for row in rows]
 
-    def record_interest(self, request_id: int, requester_user_id: str, responder_user_id: str) -> int:
+    def record_interest(self, request_id: int, buyer_user_id: str, seller_user_id: str) -> int:
+        """Persist a buyer selecting a seller for this matched request."""
         now = self._now()
         with self._connect() as conn:
             conn.execute(
@@ -140,19 +148,21 @@ class UniversalNotificationRepository:
                     qualification_status, created_at, updated_at
                 ) VALUES (?, ?, ?, 'INTERESTED', 'PENDING', 0, 'NEW', ?, ?)
                 ON CONFLICT(request_id, responder_user_id) DO UPDATE SET
-                    responder_status='INTERESTED', updated_at=excluded.updated_at
+                    requester_user_id=excluded.requester_user_id,
+                    responder_status='INTERESTED', requester_status='PENDING',
+                    qualification_status='NEW', updated_at=excluded.updated_at
                 """,
-                (int(request_id), str(requester_user_id), str(responder_user_id), now, now),
+                (int(request_id), str(buyer_user_id), str(seller_user_id), now, now),
             )
             row = conn.execute(
                 "SELECT id FROM universal_interests WHERE request_id=? AND responder_user_id=?",
-                (int(request_id), str(responder_user_id)),
+                (int(request_id), str(seller_user_id)),
             ).fetchone()
             return int(row["id"])
 
-    def set_requester_consent(self, request_id: int, responder_user_id: str, accepted: bool) -> None:
+    def set_seller_decision(self, request_id: int, seller_user_id: str, accepted: bool) -> None:
         status = "ACCEPTED" if accepted else "REJECTED"
-        qualification = "WAITING_ADDRESS" if accepted else "DECLINED"
+        qualification = "READY_FOR_BUYER" if accepted else "DECLINED"
         with self._connect() as conn:
             conn.execute(
                 """
@@ -160,10 +170,25 @@ class UniversalNotificationRepository:
                 SET requester_status=?, qualification_status=?, updated_at=?
                 WHERE request_id=? AND responder_user_id=?
                 """,
-                (status, qualification, self._now(), int(request_id), str(responder_user_id)),
+                (status, qualification, self._now(), int(request_id), str(seller_user_id)),
             )
 
-    def save_delivery_address(self, request_id: int, responder_user_id: str, address: str) -> None:
+    # Backward-compatible name used by older code/tests.
+    def set_requester_consent(self, request_id: int, responder_user_id: str, accepted: bool) -> None:
+        self.set_seller_decision(request_id, responder_user_id, accepted)
+
+    def mark_waiting_address(self, request_id: int, seller_user_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE universal_interests
+                SET qualification_status='WAITING_ADDRESS', updated_at=?
+                WHERE request_id=? AND responder_user_id=? AND requester_status='ACCEPTED'
+                """,
+                (self._now(), int(request_id), str(seller_user_id)),
+            )
+
+    def save_delivery_address(self, request_id: int, seller_user_id: str, address: str) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
@@ -173,11 +198,11 @@ class UniversalNotificationRepository:
                 """,
                 (
                     str(address).strip(), self._now(), self._now(),
-                    int(request_id), str(responder_user_id),
+                    int(request_id), str(seller_user_id),
                 ),
             )
 
-    def mark_contact_shared(self, request_id: int, responder_user_id: str) -> None:
+    def mark_contact_shared(self, request_id: int, seller_user_id: str) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
@@ -185,14 +210,14 @@ class UniversalNotificationRepository:
                 SET contact_shared=1, updated_at=?
                 WHERE request_id=? AND responder_user_id=?
                 """,
-                (self._now(), int(request_id), str(responder_user_id)),
+                (self._now(), int(request_id), str(seller_user_id)),
             )
 
-    def get_interest(self, request_id: int, responder_user_id: str) -> Optional[Dict[str, Any]]:
+    def get_interest(self, request_id: int, seller_user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM universal_interests WHERE request_id=? AND responder_user_id=?",
-                (int(request_id), str(responder_user_id)),
+                (int(request_id), str(seller_user_id)),
             ).fetchone()
         return dict(row) if row else None
 
@@ -215,57 +240,77 @@ class UniversalNotificationRepository:
                 SELECT request_id, requester_user_id, target_user_id, created_at
                 FROM universal_notifications
                 WHERE target_user_id=? AND status='SENT'
-                ORDER BY id DESC
-                LIMIT 1
+                ORDER BY id DESC LIMIT 1
                 """,
                 (str(target_user_id),),
             ).fetchone()
         return dict(row) if row else None
 
-    def latest_pending_interest_for_requester(self, requester_user_id: str) -> Optional[Dict[str, Any]]:
+    def latest_pending_interest_for_seller(self, seller_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM universal_interests
+                WHERE responder_user_id=?
+                  AND responder_status='INTERESTED'
+                  AND requester_status='PENDING'
+                  AND contact_shared=0
+                ORDER BY id DESC LIMIT 1
+                """,
+                (str(seller_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def latest_waiting_address_for_buyer(self, buyer_user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM universal_interests
                 WHERE requester_user_id=?
                   AND responder_status='INTERESTED'
-                  AND requester_status='PENDING'
-                  AND contact_shared=0
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (str(requester_user_id),),
-            ).fetchone()
-        return dict(row) if row else None
-
-    def latest_waiting_address_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM universal_interests
-                WHERE responder_user_id=?
-                  AND responder_status='INTERESTED'
                   AND requester_status='ACCEPTED'
                   AND qualification_status='WAITING_ADDRESS'
                   AND contact_shared=0
-                ORDER BY id DESC
-                LIMIT 1
+                ORDER BY id DESC LIMIT 1
                 """,
-                (str(responder_user_id),),
+                (str(buyer_user_id),),
             ).fetchone()
         return dict(row) if row else None
 
-    def latest_qualified_interest_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
+    def latest_ready_for_buyer(self, buyer_user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM universal_interests
-                WHERE responder_user_id=?
+                WHERE requester_user_id=?
                   AND requester_status='ACCEPTED'
-                  AND qualification_status='QUALIFIED'
-                ORDER BY id DESC
-                LIMIT 1
+                  AND qualification_status='READY_FOR_BUYER'
+                ORDER BY id DESC LIMIT 1
                 """,
-                (str(responder_user_id),),
+                (str(buyer_user_id),),
             ).fetchone()
         return dict(row) if row else None
+
+    def latest_qualified_interest_for_buyer(self, buyer_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM universal_interests
+                WHERE requester_user_id=?
+                  AND requester_status='ACCEPTED'
+                  AND qualification_status='QUALIFIED'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (str(buyer_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    # Compatibility wrappers for previous service names.
+    def latest_pending_interest_for_requester(self, requester_user_id: str) -> Optional[Dict[str, Any]]:
+        return self.latest_pending_interest_for_seller(requester_user_id)
+
+    def latest_waiting_address_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
+        return self.latest_waiting_address_for_buyer(responder_user_id)
+
+    def latest_qualified_interest_for_responder(self, responder_user_id: str) -> Optional[Dict[str, Any]]:
+        return self.latest_qualified_interest_for_buyer(responder_user_id)
