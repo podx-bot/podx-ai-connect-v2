@@ -76,6 +76,36 @@ Instant Delivery flow:
 Common core for future verticals:
 Location -> Nearby provider -> Accept -> Atomic task lock -> Controlled location sharing -> Status tracking -> Complete.
 
+## Smart Grocery RFQ / Local Quote Engine
+Purpose: digitize the common local grocery/kirana paper-list quotation process and turn it into a buyer-side competitive quotation workflow.
+
+Flow:
+1. Buyer sends a handwritten/printed grocery shopping-list photo or text list.
+2. PODX converts it into a structured digital list with item, quantity and unit, then asks buyer to confirm/correct the list.
+3. After confirmation, PODX targets only relevant nearby registered grocery/kirana sellers and sends the RFQ/list.
+4. Each seller gets a simple quotation form/list with a rate field beside each item and an option to mark an item Not Available.
+5. PODX automatically calculates each seller's basket total, item coverage and other comparison signals.
+6. Do not dump every quotation on the buyer. Rank/filter and normally show Top 3 or Top 5 useful choices.
+7. Ranking should not use cheapest price alone. Consider total price, full item availability, seller rating, distance, delivery availability/cost and seller response/reliability.
+8. Buyer presentation can highlight:
+   - Best Value
+   - Lowest Price
+   - Compare Top Sellers
+9. Buyer selects a seller; only then send that seller the selected-order confirmation/Confirm Order step.
+10. Selected order can continue into the existing PODX order/address/delivery flow, including future Normal or Instant Delivery.
+
+Optional Split Basket optimization:
+- If no single seller is best for the full list, PODX may calculate a combination across sellers.
+- Recommend split ordering only when the real saving remains meaningful after delivery charges and inconvenience are considered.
+
+Seller privacy/competition rules:
+- Do not reveal competitor identities or individual competitor quotations to sellers.
+- Limited feedback such as 'your quotation can be more competitive' may be used without exposing another seller's private pricing.
+- Goal is a fair competitive quote process while protecting seller business data.
+
+Reusable verticals:
+The same RFQ engine can later support groceries/kirana, building materials, electricals, hardware, restaurant/raw-material supplies and other list-based local purchasing categories.
+
 ## Payments — parked for later
 Future concept only; do not implement now:
 - Optional PODX Secure Payment / Buyer Protection.
@@ -91,4 +121,5 @@ Future concept only; do not implement now:
 4. Add Qualified Lead/Order card to seller.
 5. Build AI Product FAQ / Seller Assistant V1.
 6. Build Local Dispatch Engine V1 after core commerce conversion is stable.
-7. Payments remain parked until explicitly resumed.
+7. Build Smart Grocery RFQ / Local Quote Engine after core order and seller flows are stable.
+8. Payments remain parked until explicitly resumed.
