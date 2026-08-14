@@ -14,105 +14,50 @@ Date: 2026-08-14
 2. Seller has the matching OFFER/product.
 3. Buyer presses Interested.
 4. Seller receives availability confirmation and presses Confirm (or Decline).
-5. After seller Confirm, BUYER — never seller — receives two choices:
-   - Order Continue
-   - Direct Talk
+5. After seller Confirm, BUYER — never seller — receives two choices: Order Continue or Direct Talk.
 6. Order Continue: buyer supplies/selects delivery address and order details; PODX sends seller a qualified order/lead summary.
 7. Direct Talk: contact details may be exchanged according to consent/privacy rules.
 
-Rules:
-- Interest = Buyer action.
-- Availability confirmation = Seller action.
-- Delivery address = Buyer data.
-- Qualified order summary = Seller receives it.
-- Internal IDs/commands such as INTERESTED 5 / CONFIRM 5 must remain hidden behind WhatsApp buttons.
+Rules: Interest = Buyer action. Availability confirmation = Seller action. Delivery address = Buyer data. Qualified order summary = Seller receives it. Internal IDs/commands remain hidden behind WhatsApp buttons.
 
 ## Seller comfort / AI Product Desk
-Seller comfort is a primary design requirement because a seller may handle many buyers.
-- PODX should answer repetitive product questions on the seller's behalf.
-- Build a Smart Product Profile/FAQ from seller-confirmed listing data and safe product information.
-- Typical fields: price, quantity/size, features, usage, availability, variants, delivery, warranty/return where applicable.
-- If PODX knows the seller-confirmed answer, answer the buyer automatically without disturbing seller.
-- If information is unknown, ask seller one short question, return the answer to buyer, and save the confirmed answer for future FAQs.
-- Never invent/guess seller-specific price, stock, warranty, return or delivery promises.
+Seller comfort is a primary design requirement because a seller may handle many buyers. PODX should answer repetitive product questions on the seller's behalf using a Smart Product Profile/FAQ. Seller-confirmed information has priority. Never invent seller-specific price, stock, warranty, return or delivery promises. Unknown questions can be escalated once to the seller and the confirmed answer saved for future use.
 
 ## Standard addresses
-Seller:
-- Standard Business/Pickup Address.
-- Shop/business name optional.
-- Map location.
-- Delivery available/not available.
-- Delivery radius.
-- Later support multiple branches/addresses.
-
-Buyer:
-- Saved Delivery Address collected during first relevant order.
-- Home / Work / Other labels.
-- Reuse saved address on future orders with Change Address option.
-
-Privacy:
-- Do not expose full addresses at initial matching stage.
-- Reveal only when required by confirmed order/delivery workflow.
+Seller: Standard Business/Pickup Address, optional shop name, map location, delivery availability/radius, later multiple branches.
+Buyer: Saved Delivery Address with Home/Work/Other labels and Change Address option.
+Privacy: do not expose full addresses during initial matching; reveal only when required by confirmed order/delivery workflow.
 
 ## Local Instant Delivery / Dispatch Engine
-Reusable common engine for products, food, parcels and later ride/taxi-like flows.
+Reusable engine for products, food, parcels and later ride/taxi-like flows. Buyer can choose Pickup, Normal Delivery or Instant Delivery. For Instant Delivery, rank nearby registered delivery partners, send Accept/Decline job cards, atomically lock the task to the first valid acceptance, then share pickup/drop details only at the required stages and track ACCEPTED -> PICKED_UP -> ON_THE_WAY -> DELIVERED.
 
-Buyer delivery choices can include:
-- Pickup
-- Normal Delivery
-- Instant Delivery
-
-Instant Delivery flow:
-1. Confirmed order has seller pickup location and buyer drop location.
-2. Find/rank nearby registered delivery partners.
-3. Send a compact delivery job card with pickup area, drop area, distance and delivery fee where available.
-4. Delivery partners get Accept / Decline buttons.
-5. First valid Accept atomically locks the delivery task to that partner; all other offers close to prevent duplicate pickup.
-6. Share seller pickup location with assigned partner.
-7. Share buyer drop details only at the appropriate delivery stage.
-8. Track statuses such as ACCEPTED -> PICKED_UP -> ON_THE_WAY -> DELIVERED.
-9. Automatically update buyer and seller through WhatsApp.
-
-Common core for future verticals:
-Location -> Nearby provider -> Accept -> Atomic task lock -> Controlled location sharing -> Status tracking -> Complete.
+Common core: Location -> Nearby provider -> Accept -> Atomic task lock -> Controlled location sharing -> Status tracking -> Complete.
 
 ## Smart Grocery RFQ / Local Quote Engine
-Purpose: digitize the common local grocery/kirana paper-list quotation process and turn it into a buyer-side competitive quotation workflow.
+Buyer sends a handwritten/printed grocery list photo or text. PODX structures and confirms the list, sends it to relevant nearby grocery/kirana sellers, collects per-item rates/availability, calculates basket totals and ranks useful Top 3/Top 5 choices. Ranking considers total price, item coverage, rating, distance, delivery and reliability, not price alone. Buyer can see Best Value, Lowest Price or Compare Top Sellers. Seller competitor identities/private quotations are not exposed. Optional Split Basket may be recommended only when savings remain meaningful after delivery costs/inconvenience. Reusable for groceries, building materials, electricals, hardware, restaurant/raw-material supplies and other list-based purchasing.
 
-Flow:
-1. Buyer sends a handwritten/printed grocery shopping-list photo or text list.
-2. PODX converts it into a structured digital list with item, quantity and unit, then asks buyer to confirm/correct the list.
-3. After confirmation, PODX targets only relevant nearby registered grocery/kirana sellers and sends the RFQ/list.
-4. Each seller gets a simple quotation form/list with a rate field beside each item and an option to mark an item Not Available.
-5. PODX automatically calculates each seller's basket total, item coverage and other comparison signals.
-6. Do not dump every quotation on the buyer. Rank/filter and normally show Top 3 or Top 5 useful choices.
-7. Ranking should not use cheapest price alone. Consider total price, full item availability, seller rating, distance, delivery availability/cost and seller response/reliability.
-8. Buyer presentation can highlight:
-   - Best Value
-   - Lowest Price
-   - Compare Top Sellers
-9. Buyer selects a seller; only then send that seller the selected-order confirmation/Confirm Order step.
-10. Selected order can continue into the existing PODX order/address/delivery flow, including future Normal or Instant Delivery.
+## Zero-Touch Face Welcome / Visit Session
+Future in-store premium feature, opt-in only.
+- Goal: customer should not need to open phone, QR or scanner merely to be recognized when entering/leaving a participating store.
+- Customer profile may include optional Face Welcome enrollment and preferred language.
+- Face recognition is identification only, never authorization for payment, address/contact disclosure or other sensitive actions.
+- Store-facing data must be minimized; do not expose phone, address, purchase history or full PODX profile merely because a face matched.
+- Personalized public speaker announcements are not desired. Personalized welcome/thank-you should go privately to the recognized customer's mobile/WhatsApp, subject to applicable messaging consent/template rules.
+- Visit state prevents repeated greetings: ENTRY -> Welcome once -> ACTIVE VISIT -> EXIT -> Thank You once -> SESSION CLOSED.
+- If Face Welcome is OFF, recognition/greeting must not occur. Provide deletion/revocation controls and QR/WhatsApp fallback where appropriate.
 
-Optional Split Basket optimization:
-- If no single seller is best for the full list, PODX may calculate a combination across sellers.
-- Recommend split ordering only when the real saving remains meaningful after delivery charges and inconvenience are considered.
-
-Seller privacy/competition rules:
-- Do not reveal competitor identities or individual competitor quotations to sellers.
-- Limited feedback such as 'your quotation can be more competitive' may be used without exposing another seller's private pricing.
-- Goal is a fair competitive quote process while protecting seller business data.
-
-Reusable verticals:
-The same RFQ engine can later support groceries/kirana, building materials, electricals, hardware, restaurant/raw-material supplies and other list-based local purchasing categories.
+## PODX In-Store AI Salesman / Visual Shopping Assistant
+Premium-store assistant that starts after an opted-in customer is recognized/enters a store.
+- Customer receives a private personalized welcome on their mobile.
+- Customer can use phone camera + text/voice to show a product and ask questions.
+- Vision can identify/understand the product; store-confirmed catalog data supplies current price, stock, offers, variants and store location/aisle/floor.
+- PODX can explain features, compare products, shortlist products by budget/need, answer FAQs and guide the customer to the product location like a salesperson.
+- Never guess live price, stock, discounts or aisle/location from vision alone; these must come from seller/store-confirmed data.
+- Desired experience: Zero-Touch Welcome -> AI Shopping Assistant -> Zero-Touch Thank You -> Session Closed.
+- Potential verticals include supermarkets, electronics, clothing, jewellery, furniture and malls.
 
 ## Payments — parked for later
-Future concept only; do not implement now:
-- Optional PODX Secure Payment / Buyer Protection.
-- Buyer/seller may opt into protected transaction.
-- Settlement after delivery/acceptance/protection window subject to compliant regulated payment infrastructure.
-- Security/protection users can be charged a commission/service fee.
-- Do not design PODX to unofficially hold customer funds in its own account.
+Future concept only: optional PODX Secure Payment / Buyer Protection using compliant regulated payment infrastructure. Do not design PODX to unofficially hold customer funds in its own account.
 
 ## Immediate development order
 1. Fix buyer/seller reverse-role mapping in Lead Conversion V1.
@@ -122,4 +67,5 @@ Future concept only; do not implement now:
 5. Build AI Product FAQ / Seller Assistant V1.
 6. Build Local Dispatch Engine V1 after core commerce conversion is stable.
 7. Build Smart Grocery RFQ / Local Quote Engine after core order and seller flows are stable.
-8. Payments remain parked until explicitly resumed.
+8. Later: Zero-Touch Face Welcome + In-Store AI Salesman/Visual Shopping Assistant.
+9. Payments remain parked until explicitly resumed.
