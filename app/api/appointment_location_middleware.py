@@ -7,9 +7,11 @@ from app.whatsapp.payload_parser import extract_location_messages
 
 
 class AppointmentLocationMiddleware:
-    """Handle shared WhatsApp GPS location only while an appointment needs a place.
+    """Handle location-sensitive flows before the main webhook route.
 
-    Non-appointment webhooks are replayed untouched to the existing webhook route.
+    Appointment location keeps first priority. If no appointment is waiting, a
+    pending Universal Flow request can consume the shared GPS location. Other
+    location webhooks are replayed untouched to the existing route.
     """
 
     def __init__(self, app, container) -> None:
@@ -48,6 +50,16 @@ class AppointmentLocationMiddleware:
         handled = []
         for incoming in locations:
             reply_text = self.service.handle(incoming)
+            flow_name = "appointment"
+            if reply_text is None:
+                reply_text = self.container.universal_live_capture_service.handle_location(
+                    sender_mobile=incoming.sender_mobile,
+                    latitude=incoming.latitude,
+                    longitude=incoming.longitude,
+                    location_name=incoming.name,
+                    location_address=incoming.address,
+                )
+                flow_name = "universal"
             if reply_text is None:
                 continue
 
@@ -64,6 +76,7 @@ class AppointmentLocationMiddleware:
             )
             handled.append(
                 {
+                    "flow": flow_name,
                     "sender_mobile": incoming.sender_mobile,
                     "latitude": incoming.latitude,
                     "longitude": incoming.longitude,
@@ -75,7 +88,7 @@ class AppointmentLocationMiddleware:
         if handled:
             response = JSONResponse(
                 {
-                    "status": "appointment_location_processed",
+                    "status": "location_processed",
                     "incoming_location_count": len(handled),
                     "replies": handled,
                 }
