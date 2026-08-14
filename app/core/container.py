@@ -8,7 +8,6 @@ from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.marketplace_repository import MarketplaceRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.universal_demand_repository import UniversalDemandRepository
-from app.repositories.universal_image_pending_repository import UniversalImagePendingRepository
 from app.repositories.universal_notification_repository import UniversalNotificationRepository
 from app.repositories.user_repository import UserRepository
 from app.services.appointment_service import AppointmentService
@@ -22,7 +21,6 @@ from app.services.marketplace_conversation_service import MarketplaceConversatio
 from app.services.sarvam_tts_voice_assistant_service import SarvamTTSVoiceAssistantService
 from app.services.session_registry import SessionRegistry
 from app.services.universal_aware_conversation_service import UniversalAwareConversationService
-from app.services.universal_image_service import UniversalImageService
 from app.services.universal_live_capture_service import UniversalLiveCaptureService
 from app.services.universal_matcher import UniversalMatcher
 from app.services.universal_notification_service import UniversalNotificationService
@@ -50,7 +48,6 @@ class AppContainer:
 
         self.universal_demand_repository = UniversalDemandRepository(self.settings.database_path)
         self.universal_notification_repository = UniversalNotificationRepository(self.settings.database_path)
-        self.universal_image_pending_repository = UniversalImagePendingRepository(self.settings.database_path)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
         self.intent_router_service = IntentRouterService(
@@ -105,16 +102,9 @@ class AppContainer:
             user_repository=self.user_repository,
             session_registry=self.session_registry,
         )
-        self.universal_image_service = UniversalImageService(
-            api_key=self.settings.gemini_api_key,
-            model=self.settings.gemini_voice_model,
-            pending_repository=self.universal_image_pending_repository,
-            live_capture_service=self.universal_live_capture_service,
-        )
         self.conversation_service = UniversalAwareConversationService(
             response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service,
-            image_service=self.universal_image_service,
             base_conversation=self.base_conversation_service,
         )
 
@@ -158,6 +148,7 @@ class AppContainer:
         }
 
     def _universal_profiles(self):
+        """Combine registered users, seller listings and service profiles for targeting."""
         profiles = []
         user_rows = self.database.fetchall("SELECT * FROM users WHERE registration_complete = 1")
         users = {str(row["whatsapp_mobile"]): dict(row) for row in user_rows}
@@ -167,14 +158,16 @@ class AppContainer:
             role = str(user.get("role") or "").upper()
             if not role and capabilities:
                 role = "BOTH" if len(capabilities) > 1 else str(capabilities[0]).upper()
-            profiles.append({
-                "user_id": mobile,
-                "role": role,
-                "category": user.get("job_category"),
-                "skill": user.get("job_category"),
-                "latitude": user.get("latitude"),
-                "longitude": user.get("longitude"),
-            })
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": role,
+                    "category": user.get("job_category"),
+                    "skill": user.get("job_category"),
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
 
         seller_rows = self.database.fetchall(
             "SELECT seller_mobile, product_name FROM seller_listings WHERE status = 'ACTIVE'"
@@ -185,14 +178,16 @@ class AppContainer:
             seller_products.setdefault(mobile, []).append(row["product_name"])
         for mobile, products in seller_products.items():
             user = users.get(mobile, {})
-            profiles.append({
-                "user_id": mobile,
-                "role": "SELLER",
-                "products": products,
-                "category": " ".join(str(x) for x in products[:5]),
-                "latitude": user.get("latitude"),
-                "longitude": user.get("longitude"),
-            })
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": "SELLER",
+                    "products": products,
+                    "category": " ".join(str(x) for x in products[:5]),
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
 
         provider_rows = self.database.fetchall(
             "SELECT provider_mobile, service_name FROM service_provider_profiles WHERE status = 'ACTIVE'"
@@ -200,14 +195,16 @@ class AppContainer:
         for row in provider_rows:
             mobile = str(row["provider_mobile"])
             user = users.get(mobile, {})
-            profiles.append({
-                "user_id": mobile,
-                "role": "SERVICE_PROVIDER",
-                "service": row["service_name"],
-                "category": row["service_name"],
-                "latitude": user.get("latitude"),
-                "longitude": user.get("longitude"),
-            })
+            profiles.append(
+                {
+                    "user_id": mobile,
+                    "role": "SERVICE_PROVIDER",
+                    "service": row["service_name"],
+                    "category": row["service_name"],
+                    "latitude": user.get("latitude"),
+                    "longitude": user.get("longitude"),
+                }
+            )
         return profiles
 
     def close(self) -> None:

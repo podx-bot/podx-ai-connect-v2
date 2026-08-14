@@ -19,15 +19,6 @@ class IncomingAudioMessage:
 
 
 @dataclass(frozen=True)
-class IncomingImageMessage:
-    provider_message_id: str
-    sender_mobile: str
-    media_id: str
-    mime_type: Optional[str]
-    caption: Optional[str]
-
-
-@dataclass(frozen=True)
 class IncomingLocationMessage:
     provider_message_id: str
     sender_mobile: str
