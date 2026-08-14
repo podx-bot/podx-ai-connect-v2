@@ -9,24 +9,22 @@ from app.services.sarvam_primary_voice_assistant_service import SarvamPrimaryVoi
 
 
 class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
-    """Use Sarvam Bulbul v3 HTTP streaming TTS with bounded latency.
-
-    Runtime provider failures fail fast. Gemini is retained only for configuration
-    and unsupported-language compatibility cases so text replies never wait on a
-    slow secondary TTS call.
-    """
+    """Use Sarvam Bulbul v3 HTTP streaming TTS with bounded latency."""
 
     TTS_URL = "https://api.sarvam.ai/text-to-speech/stream"
     TTS_MODEL = "bulbul:v3"
     TTS_SPEAKER = "shubh"
     TTS_SAMPLE_RATE = 24000
+    TTS_OUTPUT_CODEC = "opus"
+    TTS_OUTPUT_BITRATE = "32k"
     TTS_CONNECT_TIMEOUT_SECONDS = 2.5
     TTS_READ_TIMEOUT_SECONDS = 6.0
-    TTS_MAX_PCM_BYTES = 4 * 1024 * 1024
+    TTS_MAX_AUDIO_BYTES = 2 * 1024 * 1024
 
     GEMINI_COMPATIBILITY_FALLBACK_STATUSES = {
         "SARVAM_TTS_NOT_CONFIGURED",
         "SARVAM_TTS_UNSUPPORTED_LANGUAGE",
+        "SARVAM_TTS_OPUS_NOT_OGG",
     }
 
     SCRIPT_LANGUAGES = (
@@ -82,11 +80,11 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         if not language_code:
             return {"success": False, "status": "SARVAM_TTS_UNSUPPORTED_LANGUAGE"}
 
-        cache_key = f"sarvam-stream:{language_code}:{spoken_text}"
-        cached_pcm = self._tts_cache.get(cache_key)
-        if cached_pcm:
+        cache_key = f"sarvam-stream-opus:{language_code}:{spoken_text}"
+        cached_audio = self._tts_cache.get(cache_key)
+        if cached_audio:
             return self._success_result(
-                cached_pcm,
+                cached_audio,
                 spoken_text,
                 language_code,
                 cache_hit=True,
@@ -103,7 +101,8 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
             "model": self.TTS_MODEL,
             "pace": 1.1,
             "speech_sample_rate": self.TTS_SAMPLE_RATE,
-            "output_audio_codec": "linear16",
+            "output_audio_codec": self.TTS_OUTPUT_CODEC,
+            "output_audio_bitrate": self.TTS_OUTPUT_BITRATE,
             "temperature": 0.4,
         }
         timeout = httpx.Timeout(
@@ -115,7 +114,7 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
 
         started = time.perf_counter()
         first_byte_ms = None
-        pcm_parts: list[bytes] = []
+        audio_parts: list[bytes] = []
         total_bytes = 0
 
         try:
@@ -141,28 +140,38 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
                     if first_byte_ms is None:
                         first_byte_ms = round((time.perf_counter() - started) * 1000)
                     total_bytes += len(chunk)
-                    if total_bytes > self.TTS_MAX_PCM_BYTES:
+                    if total_bytes > self.TTS_MAX_AUDIO_BYTES:
                         return {
                             "success": False,
                             "status": "SARVAM_TTS_AUDIO_TOO_LARGE",
                             "error_type": "AudioSizeError",
                         }
-                    pcm_parts.append(chunk)
+                    audio_parts.append(chunk)
 
-            pcm_bytes = b"".join(pcm_parts)
-            if not pcm_bytes:
-                return {"success": False, "status": "SARVAM_TTS_EMPTY_PCM"}
+            audio_bytes = b"".join(audio_parts)
+            if not audio_bytes:
+                return {"success": False, "status": "SARVAM_TTS_EMPTY_AUDIO"}
 
             stream_ms = round((time.perf_counter() - started) * 1000)
-            self._cache_tts(cache_key, pcm_bytes)
+            if not audio_bytes.startswith(b"OggS"):
+                return {
+                    "success": False,
+                    "status": "SARVAM_TTS_OPUS_NOT_OGG",
+                    "error_type": "AudioContainerError",
+                    "first_byte_ms": first_byte_ms or stream_ms,
+                    "stream_ms": stream_ms,
+                }
+
+            self._cache_tts(cache_key, audio_bytes)
             print(
-                "VOICE TTS PATH: stage=sarvam_tts_http_stream success=True "
+                "VOICE TTS PATH: stage=sarvam_tts_http_stream_opus success=True "
                 f"language={language_code} first_byte_ms={first_byte_ms or stream_ms} "
-                f"stream_ms={stream_ms} pcm_bytes={len(pcm_bytes)} client_reused=True",
+                f"stream_ms={stream_ms} audio_bytes={len(audio_bytes)} "
+                "codec=opus bitrate=32k client_reused=True conversion_bypass=True",
                 flush=True,
             )
             return self._success_result(
-                pcm_bytes,
+                audio_bytes,
                 spoken_text,
                 language_code,
                 cache_hit=False,
@@ -187,7 +196,7 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
 
     def _success_result(
         self,
-        pcm_bytes: bytes,
+        audio_bytes: bytes,
         spoken_text: str,
         language_code: str,
         *,
@@ -198,7 +207,7 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
         return {
             "success": True,
             "status": "SYNTHESIZED_SARVAM_STREAM_CACHE" if cache_hit else "SYNTHESIZED_SARVAM_STREAM",
-            "content": pcm_bytes,
+            "content": audio_bytes,
             "sample_rate": self.TTS_SAMPLE_RATE,
             "channels": 1,
             "sample_width": 2,
@@ -206,10 +215,14 @@ class SarvamTTSVoiceAssistantService(SarvamPrimaryVoiceAssistantService):
             "model": self.TTS_MODEL,
             "voice": self.TTS_SPEAKER,
             "cache_hit": cache_hit,
-            "tts_path": "sarvam_bulbul_v3_http_stream",
+            "tts_path": "sarvam_bulbul_v3_http_stream_opus",
             "language_code": language_code,
             "first_byte_ms": first_byte_ms,
             "stream_ms": stream_ms,
+            "audio_codec": self.TTS_OUTPUT_CODEC,
+            "mime_type": "audio/ogg",
+            "file_name": "podx-reply.ogg",
+            "encoded_audio": True,
         }
 
     @classmethod
