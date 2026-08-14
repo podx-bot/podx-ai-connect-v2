@@ -19,10 +19,15 @@ class UniversalImageService:
         "sell", "selling", "have", "offer", "అమ్మాలి", "అమ్ముతాను", "నా దగ్గర ఉంది",
         "ఇస్తాను", "bechna", "bechunga", "available",
     }
+    DEFAULT_IMAGE_MODEL = "gemini-2.5-flash"
+    IMAGE_MODEL_FALLBACKS = ("gemini-2.5-flash", "gemini-2.0-flash")
 
     def __init__(self, api_key: str, model: str, pending_repository,
                  live_capture_service, client: Any | None = None) -> None:
-        self.model = str(model or "gemini-3.6-flash").strip()
+        configured = str(model or "").strip()
+        # Voice/TTS configuration is shared by the container, but image understanding
+        # must never depend on a preview/unsupported voice model name.
+        self.model = configured if configured and "tts" not in configured.casefold() else self.DEFAULT_IMAGE_MODEL
         self.pending = pending_repository
         self.live = live_capture_service
         self.client = client or (genai.Client(api_key=api_key) if api_key else None)
@@ -36,20 +41,41 @@ class UniversalImageService:
             return "Image data రాలేదు. దయచేసి photo మళ్లీ పంపండి."
 
         prompt = self._prompt(caption)
-        try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(
-                        data=image_bytes,
-                        mime_type=mime_type or "image/jpeg",
+        payload = None
+        last_error = None
+        models = []
+        for candidate in (self.model, *self.IMAGE_MODEL_FALLBACKS):
+            candidate = str(candidate or "").strip()
+            if candidate and candidate not in models:
+                models.append(candidate)
+
+        for model in models:
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=[
+                        prompt,
+                        types.Part.from_bytes(
+                            data=image_bytes,
+                            mime_type=mime_type or "image/jpeg",
+                        ),
+                    ],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
                     ),
-                ],
+                )
+                raw = str(getattr(response, "text", "") or "").strip()
+                payload = self._parse_json(raw)
+                break
+            except Exception as error:
+                last_error = error
+
+        if payload is None:
+            print(
+                "PODX IMAGE AI ERROR: "
+                f"models={models} error={type(last_error).__name__ if last_error else 'unknown'}: {last_error}",
+                flush=True,
             )
-            raw = str(getattr(response, "text", "") or "").strip()
-            payload = self._parse_json(raw)
-        except Exception:
             return "Photo అర్థం చేసుకోవడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ పంపండి లేదా చిన్న caption పెట్టండి."
 
         subject = " ".join(str(payload.get("subject") or "").strip().split())
