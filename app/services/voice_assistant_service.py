@@ -229,6 +229,15 @@ class VoiceAssistantService:
         if "appointment request save అయింది" in lowered:
             return "మీ appointment request save అయింది. పూర్తి వివరాలు text messageలో ఉన్నాయి."
 
+        # The full text reply keeps demand-tracking detail. For voice, confirm the
+        # useful outcome only so TTS produces a much shorter clip and WhatsApp can
+        # deliver it sooner.
+        if "service request save" in lowered and "provider" in lowered:
+            return "మీ service request save అయింది. Provider available అయినప్పుడు PODX connect చేస్తుంది."
+
+        if "product request save" in lowered and ("seller" in lowered or "stock" in lowered):
+            return "మీ product request save అయింది. Seller లేదా stock available అయినప్పుడు PODX connect చేస్తుంది."
+
         category_markers = (
             "delivery",
             "catering",
