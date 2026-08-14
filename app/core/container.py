@@ -110,6 +110,9 @@ class AppContainer:
             model=self.settings.gemini_voice_model,
             pending_repository=self.universal_image_pending_repository,
             live_capture_service=self.universal_live_capture_service,
+            openai_api_key=self.settings.openai_api_key,
+            openai_model=self.settings.openai_vision_model,
+            min_confidence=self.settings.image_ai_min_confidence,
         )
         self.conversation_service = UniversalAwareConversationService(
             response_commands=self.universal_response_command_service,
