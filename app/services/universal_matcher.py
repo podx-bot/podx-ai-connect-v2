@@ -15,10 +15,17 @@ from typing import Any, Dict, List
 
 class UniversalMatcher:
     DEFAULT_MIN_SCORE = 0.48
+    DEFAULT_MIN_SUBJECT_SCORE = 0.30
 
-    def __init__(self, repository, min_score: float = DEFAULT_MIN_SCORE) -> None:
+    def __init__(
+        self,
+        repository,
+        min_score: float = DEFAULT_MIN_SCORE,
+        min_subject_score: float = DEFAULT_MIN_SUBJECT_SCORE,
+    ) -> None:
         self.repository = repository
         self.min_score = float(min_score)
+        self.min_subject_score = float(min_subject_score)
 
     def find_matches(self, record: Dict[str, Any], limit: int = 10) -> List[Dict[str, Any]]:
         candidates = self.repository.list_active(
@@ -32,9 +39,17 @@ class UniversalMatcher:
             if not self._relationship_compatible(record, candidate):
                 continue
             scored = self.score(record, candidate)
+            if scored["subject_score"] < self.min_subject_score:
+                continue
             if scored["score"] >= self.min_score:
                 ranked.append({**candidate, **scored})
-        ranked.sort(key=lambda item: (item["score"], -(item.get("distance_km") or 0.0)), reverse=True)
+        ranked.sort(
+            key=lambda item: (
+                item["score"],
+                -(item["distance_km"] if item.get("distance_km") is not None else 999999.0),
+            ),
+            reverse=True,
+        )
         return ranked[: max(1, int(limit))]
 
     def score(self, a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
@@ -44,8 +59,6 @@ class UniversalMatcher:
         time_score = self._time_score(a.get("when_text") or a.get("when"), b.get("when_text") or b.get("when"))
         quantity = self._quantity_score(a, b)
         price = self._price_score(a, b)
-
-        # Subject is the strongest signal. Location is next because PODX is local-first.
         score = (
             subject * 0.46
             + distance * 0.24
@@ -69,13 +82,8 @@ class UniversalMatcher:
         db = str(b.get("domain") or "OTHER").upper()
         sa = str(a.get("side") or "NEED").upper()
         sb = str(b.get("side") or "NEED").upper()
-
-        # Worker looking for work ↔ employer looking for workers is a fulfilment
-        # relationship even though natural-language extraction may mark both as NEED.
         if {da, db} == {"WORK", "WORKERS"}:
             return True
-
-        # Products/services/other offers fulfil needs in the same broad domain.
         if da == db:
             return sa != sb
         return False
