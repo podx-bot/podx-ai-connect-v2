@@ -38,13 +38,25 @@ class FakeUserRepository:
         return 1
 
 
-def build_service():
+class ForcedIntentRouter:
+    def __init__(self, rule_intent=None, routed_intent="UNKNOWN"):
+        self.rule_intent = rule_intent
+        self.routed_intent = routed_intent
+
+    def _classify_rules(self, message):
+        return self.rule_intent
+
+    def classify(self, message):
+        return {"intent": self.routed_intent, "confidence": 1.0}
+
+
+def build_service(intent_router=None):
     users = FakeUserRepository()
     registry = FakeRegistry()
     service = IntentAwareConversationService(
         user_repository=users,
         session_registry=registry,
-        intent_router=IntentRouterService(api_key=""),
+        intent_router=intent_router or IntentRouterService(api_key=""),
         appointment_service=None,
     )
     return service, users, registry
@@ -144,3 +156,44 @@ def test_explicit_menu_command_keeps_global_menu_behavior():
     service.process("9199", "menu")
 
     assert registry.session.step == ConversationStep.MAIN_MENU
+
+
+def test_rule_job_seeker_repeat_inside_worker_category_stays_short():
+    router = ForcedIntentRouter(rule_intent="JOB_SEEKER", routed_intent="JOB_SEEKER")
+    service, users, registry = build_service(intent_router=router)
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    reply = service.process("9199", "నాకు పని కావాలి")
+
+    assert registry.session.step == ConversationStep.WORKER_CATEGORY
+    assert registry.session.data == {"role": "WORKER"}
+    assert "ఏ పని కావాలో పేరు చెప్పండి" in reply
+    assert "1. Delivery" not in reply
+
+
+def test_router_job_seeker_repeat_inside_worker_category_stays_short():
+    router = ForcedIntentRouter(rule_intent=None, routed_intent="JOB_SEEKER")
+    service, users, registry = build_service(intent_router=router)
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    reply = service.process("9199", "పని గురించి మాట్లాడాలి")
+
+    assert registry.session.step == ConversationStep.WORKER_CATEGORY
+    assert registry.session.data == {"role": "WORKER"}
+    assert "ఏ పని కావాలో పేరు చెప్పండి" in reply
+    assert "1. Delivery" not in reply
+
+
+def test_valid_category_wins_even_when_router_would_repeat_job_seeker_intent():
+    router = ForcedIntentRouter(rule_intent="JOB_SEEKER", routed_intent="JOB_SEEKER")
+    service, users, registry = build_service(intent_router=router)
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    reply = service.process("9199", "Delivery")
+
+    assert registry.session.step == ConversationStep.WORKER_EXPERIENCE
+    assert registry.session.data["category"] == "Delivery"
+    assert "Experience" in reply
