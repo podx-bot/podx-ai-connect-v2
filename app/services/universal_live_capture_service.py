@@ -37,20 +37,10 @@ class UniversalLiveCaptureService:
         request = dict(extracted.get("request") or {})
         if not request:
             return None
-        return self.process_structured(
-            sender_mobile=sender_mobile,
-            request=request,
-            source="text",
-        )
+        return self.process_structured(sender_mobile=sender_mobile, request=request, source="text")
 
-    def process_structured(
-        self,
-        sender_mobile: str,
-        request: Dict[str, Any],
-        source: str = "text",
-        media_ref: str | None = None,
-    ) -> Optional[str]:
-        """Persist and route a structured request produced by text or image AI."""
+    def process_structured(self, sender_mobile: str, request: Dict[str, Any],
+                           source: str = "text", media_ref: str | None = None) -> Optional[str]:
         if not self._can_capture(sender_mobile):
             return None
         request = dict(request or {})
@@ -68,7 +58,6 @@ class UniversalLiveCaptureService:
         request["source"] = str(source or "text")
         request["media_ref"] = media_ref
         request["when"] = request.get("when") or request.get("when_text")
-
         if user.get("latitude") is not None and user.get("longitude") is not None:
             request["latitude"] = user.get("latitude")
             request["longitude"] = user.get("longitude")
@@ -78,32 +67,19 @@ class UniversalLiveCaptureService:
         stored = self.demands.get(request_id) or {**request, "id": request_id}
         if stored.get("latitude") is None or stored.get("longitude") is None:
             subject = stored.get("subject") or "మీ requirement"
-            return (
-                f"✅ '{subject}' requirement save చేశాను. "
-                "మీకు దగ్గరలో సరైన match వెతకడానికి Current Location share చేయండి."
-            )
+            return f"✅ '{subject}' requirement save చేశాను. మీకు దగ్గరలో సరైన match వెతకడానికి Current Location share చేయండి."
         return self._match_target_notify(stored)
 
     def handle_location(self, sender_mobile: str, latitude: float, longitude: float,
-                        location_name: str | None = None,
-                        location_address: str | None = None) -> Optional[str]:
+                        location_name: str | None = None, location_address: str | None = None) -> Optional[str]:
         pending = self.demands.latest_active_for_user_missing_location(sender_mobile)
         if pending is None:
             return None
         location_text = location_name or location_address
-        self.users.save_location(
-            whatsapp_mobile=sender_mobile,
-            latitude=latitude,
-            longitude=longitude,
-            location_name=location_name,
-            location_address=location_address,
-        )
-        self.demands.update_location(
-            demand_id=int(pending["id"]),
-            latitude=latitude,
-            longitude=longitude,
-            location_text=location_text,
-        )
+        self.users.save_location(whatsapp_mobile=sender_mobile, latitude=latitude, longitude=longitude,
+                                 location_name=location_name, location_address=location_address)
+        self.demands.update_location(demand_id=int(pending["id"]), latitude=latitude, longitude=longitude,
+                                     location_text=location_text)
         stored = self.demands.get(int(pending["id"])) or pending
         return self._match_target_notify(stored, location_saved=True)
 
@@ -116,27 +92,43 @@ class UniversalLiveCaptureService:
         return not step_name or step_name in {"MAIN_MENU", "REGISTERED"}
 
     def _match_target_notify(self, request: Dict[str, Any], location_saved: bool = False) -> str:
+        prefix = "📍 Location save అయింది. " if location_saved else ""
         matches = self.matcher.find_matches(request, limit=10)
         if matches:
-            targets = [{"user_id": str(item.get("user_id") or ""), "score": item.get("score"), "distance_km": item.get("distance_km")}
-                       for item in matches if item.get("user_id")]
+            targets = [{"user_id": str(item.get("user_id") or ""), "score": item.get("score"),
+                        "distance_km": item.get("distance_km")}
+                       for item in matches if item.get("user_id") and str(item.get("user_id")) != str(request.get("user_id"))]
             plan = {"status": "TARGETED", "request_id": request.get("id"), "total_targets": len(targets),
                     "waves": [{"wave": 1, "radius_km": None, "targets": targets}]}
             delivery = self.notifications.dispatch_plan(request, plan)
-            prefix = "📍 Location save అయింది. " if location_saved else ""
-            return (f"{prefix}✅ {len(matches)} సరైన match{'es' if len(matches) != 1 else ''} దొరికాయి. "
-                    f"వారిలో {delivery.get('sent', 0)} మందికి notification పంపాను. "
-                    "ఎవరైనా interested అంటే వెంటనే మీకు చెప్తాను.")
+            sent = int(delivery.get("sent") or 0)
+            failed = int(delivery.get("failed") or 0)
+            skipped = int(delivery.get("skipped_duplicate") or 0)
+            if sent > 0:
+                return (f"{prefix}✅ {len(matches)} సరైన match{'es' if len(matches) != 1 else ''} దొరికాయి. "
+                        f"వారిలో {sent} మందికి notification పంపాను. ఎవరైనా interested అంటే వెంటనే మీకు చెప్తాను.")
+            if failed > 0:
+                return (f"{prefix}✅ సరైన match దొరికింది, కానీ WhatsApp notification delivery ప్రస్తుతం fail అయింది. "
+                        "మీ request ACTIVEగా ఉంది; deliveryని మళ్లీ ప్రయత్నించవచ్చు.")
+            if skipped > 0:
+                return (f"{prefix}✅ సరైన match ఇప్పటికే ఈ requestకి contact/notify చేయబడింది. "
+                        "మీ request ACTIVEగా ఉంది; వారి response కోసం చూస్తున్నాను.")
+            return (f"{prefix}మీ request ACTIVEగా ఉంచాను. Match record ఉంది కానీ కొత్త eligible recipient లేదు. "
+                    "కొత్త match దొరికిన వెంటనే WhatsAppలో చెప్తాను.")
 
         already = self.notification_repository.contacted_user_ids(int(request["id"]))
         plan = self.targeting.build_plan(request=request, already_contacted_user_ids=already, per_wave_limit=25)
         if int(plan.get("total_targets") or 0) > 0:
             delivery = self.notifications.dispatch_plan(request, plan)
-            prefix = "📍 Location save అయింది. " if location_saved else ""
-            return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {plan.get('total_targets', 0)} మందిని గుర్తించాను; "
-                    f"{delivery.get('sent', 0)} మందికి request పంపాను. Response వచ్చిన వెంటనే మీకు చెప్తాను.")
+            sent = int(delivery.get("sent") or 0)
+            failed = int(delivery.get("failed") or 0)
+            if sent > 0:
+                return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {plan.get('total_targets', 0)} మందిని గుర్తించాను; "
+                        f"{sent} మందికి request పంపాను. Response వచ్చిన వెంటనే మీకు చెప్తాను.")
+            if failed > 0:
+                return (f"{prefix}సంబంధిత users దొరికారు, కానీ WhatsApp delivery ప్రస్తుతం fail అయింది. "
+                        "మీ request ACTIVEగా ఉంచాను.")
 
-        prefix = "📍 Location save అయింది. " if location_saved else ""
         return (f"{prefix}మీ request ACTIVEగా ఉంచాను. ఇప్పుడు direct match లేదు. "
                 "సంబంధిత వ్యక్తి/product/service దొరికిన వెంటనే మీకు WhatsAppలో చెప్తాను.")
 
