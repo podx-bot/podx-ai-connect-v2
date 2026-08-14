@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 class UniversalMatcher:
     DEFAULT_MIN_SCORE = 0.48
-    DEFAULT_MIN_SUBJECT_SCORE = 0.30
+    DEFAULT_MIN_SUBJECT_SCORE = 0.35
 
     def __init__(
         self,
