@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, List
+from typing import Any, Callable, Dict, List
 
 
 class UniversalNotificationService:
@@ -74,7 +74,8 @@ class UniversalNotificationService:
         subject = str(request.get("subject") or "requirement")
         prompt = (
             f"PODX: మీ '{subject}' requirement కి ఒకరు interested అన్నారు. "
-            f"Contact share చేయాలంటే CONFIRM {request_id} {responder} అని reply చేయండి."
+            f"Contact share చేయాలంటే CONFIRM {request_id} అని reply చేయండి. "
+            "వద్దంటే NO అని reply చేయండి."
         )
         delivery = self.whatsapp.send_text_message(mobile, prompt)
         return {
