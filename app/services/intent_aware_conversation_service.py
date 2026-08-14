@@ -169,6 +169,19 @@ class IntentAwareConversationService(ConversationService):
                         sender_mobile,
                         "🛍️ మీ product request save చేశాను. ప్రస్తుతం local match దొరకకపోతే PODX ఈ demandని track చేసి seller/stock available అయినప్పుడు connect చేయగలదు.",
                     )
+
+        if registered and session.step == ConversationStep.WORKER_CATEGORY:
+            normalized = clean_message.lower()
+            explicit_menu = normalized in {"menu", "main menu", "మెను", "మెనూ"}
+            category = self.CATEGORY_MAP.get(normalized)
+            if category is None:
+                category = self.smart_job_message_service.extract(clean_message).get("category")
+            if not explicit_menu and category is None:
+                return self._reply(
+                    sender_mobile,
+                    "ఏ పని కావాలో పేరు చెప్పండి. ఉదా: Delivery, Catering, Driver లేదా Cleaning.",
+                )
+
         return super().process(sender_mobile, clean_message)
 
     def _record_capability(self, sender_mobile: str, capability: str) -> None:
@@ -234,7 +247,7 @@ class IntentAwareConversationService(ConversationService):
             if value is None:
                 value = self.smart_job_message_service.extract(message).get("category")
             if value is None:
-                return self._reply(sender_mobile, self._category_menu())
+                return self._reply(sender_mobile, "ఏ పని కావాలో పేరు చెప్పండి. ఉదా: Delivery, Catering, Driver లేదా Cleaning.")
             session.data["category"] = value
             return self._next_worker_prompt_or_save(sender_mobile)
         if session.step == ConversationStep.WORKER_EXPERIENCE:
