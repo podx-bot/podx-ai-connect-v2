@@ -27,7 +27,10 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_CATEGORY,
         ConversationStep.WORKER_EXPERIENCE,
         ConversationStep.WORKER_AVAILABILITY,
+        ConversationStep.WORKER_LOCATION,
         ConversationStep.EMPLOYER_SERVICE,
+        ConversationStep.EMPLOYER_REQUIREMENT,
+        ConversationStep.EMPLOYER_LOCATION,
     }
 
     APPOINTMENT_INTERRUPT_INTENTS = {
