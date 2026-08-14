@@ -22,6 +22,9 @@ class Settings:
     gemini_voice_max_bytes: int
     gemini_tts_model: str
     gemini_tts_voice: str
+    openai_api_key: str
+    openai_vision_model: str
+    image_ai_min_confidence: float
     voice_reply_enabled: bool
     voice_reply_max_chars: int
 
@@ -48,6 +51,17 @@ def _positive_int_env(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(0.0, min(value, 1.0))
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -91,6 +105,9 @@ def load_settings() -> Settings:
             "GEMINI_TTS_VOICE",
             "Sulafat",
         ).strip(),
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        openai_vision_model=os.getenv("OPENAI_VISION_MODEL", "gpt-5").strip(),
+        image_ai_min_confidence=_float_env("PODX_IMAGE_AI_MIN_CONFIDENCE", 0.65),
         voice_reply_enabled=_bool_env("PODX_VOICE_REPLY_ENABLED", True),
         voice_reply_max_chars=_positive_int_env(
             "PODX_VOICE_REPLY_MAX_CHARS",
