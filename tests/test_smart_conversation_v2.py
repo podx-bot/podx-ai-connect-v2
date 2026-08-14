@@ -109,3 +109,38 @@ def test_single_message_can_capture_category_experience_and_availability():
     assert users.worker_profile["availability"] == "Tomorrow"
     assert registry.session.step == ConversationStep.WORKER_LOCATION
     assert "Current Location" in reply
+
+
+def test_unclear_worker_category_followup_is_short_and_does_not_repeat_full_menu():
+    service, users, registry = build_service()
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    reply = service.process("9199", "హలో podx వినిపిస్తుందా")
+
+    assert registry.session.step == ConversationStep.WORKER_CATEGORY
+    assert "ఏ పని కావాలో పేరు చెప్పండి" in reply
+    assert "1. Delivery" not in reply
+    assert "9. Other" not in reply
+
+
+def test_valid_category_after_short_prompt_still_advances_to_experience():
+    service, users, registry = build_service()
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    reply = service.process("9199", "delivery")
+
+    assert registry.session.step == ConversationStep.WORKER_EXPERIENCE
+    assert registry.session.data["category"] == "Delivery"
+    assert "Experience" in reply
+
+
+def test_explicit_menu_command_keeps_global_menu_behavior():
+    service, users, registry = build_service()
+    registry.session.step = ConversationStep.WORKER_CATEGORY
+    registry.session.data = {"role": "WORKER"}
+
+    service.process("9199", "menu")
+
+    assert registry.session.step == ConversationStep.MAIN_MENU
