@@ -162,3 +162,45 @@ class UniversalNotificationRepository:
                 (int(request_id), str(responder_user_id)),
             ).fetchone()
         return dict(row) if row else None
+
+    def was_targeted(self, request_id: int, target_user_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM universal_notifications
+                WHERE request_id=? AND target_user_id=? AND status='SENT'
+                LIMIT 1
+                """,
+                (int(request_id), str(target_user_id)),
+            ).fetchone()
+        return row is not None
+
+    def latest_sent_request_for_target(self, target_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT request_id, requester_user_id, target_user_id, created_at
+                FROM universal_notifications
+                WHERE target_user_id=? AND status='SENT'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(target_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def latest_pending_interest_for_requester(self, requester_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM universal_interests
+                WHERE requester_user_id=?
+                  AND responder_status='INTERESTED'
+                  AND requester_status='PENDING'
+                  AND contact_shared=0
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(requester_user_id),),
+            ).fetchone()
+        return dict(row) if row else None
