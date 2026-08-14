@@ -9,7 +9,7 @@ conversation router can continue.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 
 class UniversalResponseCommandService:
@@ -43,31 +43,13 @@ class UniversalResponseCommandService:
         if explicit_interest:
             return self._interest(sender_mobile, int(explicit_interest.group(1)))
 
-        explicit_confirm = re.match(
-            r"^(?:confirm|share|yes|ok|okay)\s*#?(\d+)\s+([^\s]+)\s*$",
-            text,
-            re.I,
-        )
+        explicit_confirm = re.match(r"^(?:confirm|share|yes|ok|okay)\s*#?(\d+)\s*$", text, re.I)
         if explicit_confirm:
-            return self._consent(
-                sender_mobile,
-                int(explicit_confirm.group(1)),
-                explicit_confirm.group(2),
-                accepted=True,
-            )
+            return self._consent_for_request(sender_mobile, int(explicit_confirm.group(1)), True)
 
-        explicit_decline = re.match(
-            r"^(?:decline|reject|no|cancel)\s*#?(\d+)\s+([^\s]+)\s*$",
-            text,
-            re.I,
-        )
+        explicit_decline = re.match(r"^(?:decline|reject|no|cancel)\s*#?(\d+)\s*$", text, re.I)
         if explicit_decline:
-            return self._consent(
-                sender_mobile,
-                int(explicit_decline.group(1)),
-                explicit_decline.group(2),
-                accepted=False,
-            )
+            return self._consent_for_request(sender_mobile, int(explicit_decline.group(1)), False)
 
         pending_target = self.notification_repository.latest_sent_request_for_target(sender_mobile)
         if pending_target and self._is_interest(text):
@@ -97,6 +79,17 @@ class UniversalResponseCommandService:
         if result.get("status") == "WAITING_REQUESTER_CONSENT":
             return "✅ మీ interest పంపించాను. అవతలి వ్యక్తి contact shareకి confirm చేస్తే వెంటనే మీకు చెప్తాను."
         return "మీ interest save చేశాను."
+
+    def _consent_for_request(self, requester_mobile: str, request_id: int, accepted: bool) -> str:
+        pending = self.notification_repository.latest_pending_interest_for_requester(requester_mobile)
+        if not pending or int(pending.get("request_id") or 0) != int(request_id):
+            return "ఈ requestకి pending contact confirmation దొరకలేదు."
+        return self._consent(
+            requester_mobile,
+            request_id,
+            str(pending["responder_user_id"]),
+            accepted,
+        )
 
     def _consent(self, requester_mobile: str, request_id: int, responder_mobile: str, accepted: bool) -> str:
         request = self.demands.get(request_id)
