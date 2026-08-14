@@ -49,6 +49,10 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_AVAILABILITY,
     }
 
+    SHORT_WORKER_CATEGORY_PROMPT = (
+        "ఏ పని కావాలో పేరు చెప్పండి. ఉదా: Delivery, Catering, Driver లేదా Cleaning."
+    )
+
     def __init__(
         self,
         user_repository,
@@ -71,6 +75,15 @@ class IntentAwareConversationService(ConversationService):
 
         rule_classifier = getattr(self.intent_router, "_classify_rules", None)
         rule_intent = rule_classifier(clean_message) if registered and callable(rule_classifier) else None
+
+        if registered and session.step == ConversationStep.WORKER_CATEGORY:
+            active_reply = self._handle_active_worker_category(
+                sender_mobile=sender_mobile,
+                message=clean_message,
+                detected_intent=rule_intent,
+            )
+            if active_reply is not None:
+                return active_reply
 
         # A clear new request is allowed to leave stale worker/employer menus.
         # Only deterministic rule matches interrupt; unknown text and normal
@@ -137,6 +150,11 @@ class IntentAwareConversationService(ConversationService):
         if router_allowed:
             classification = self.intent_router.classify(clean_message)
             intent = classification.get("intent", "UNKNOWN")
+            if (
+                session.step == ConversationStep.WORKER_CATEGORY
+                and intent == "JOB_SEEKER"
+            ):
+                return self._reply(sender_mobile, self.SHORT_WORKER_CATEGORY_PROMPT)
             if intent == "APPOINTMENT" and self.appointment_service:
                 return self.appointment_service.start(sender_mobile, initial_message=clean_message)
             if intent in {"JOB_SEEKER", "EMPLOYER"}:
@@ -177,12 +195,34 @@ class IntentAwareConversationService(ConversationService):
             if category is None:
                 category = self.smart_job_message_service.extract(clean_message).get("category")
             if not explicit_menu and category is None:
-                return self._reply(
-                    sender_mobile,
-                    "ఏ పని కావాలో పేరు చెప్పండి. ఉదా: Delivery, Catering, Driver లేదా Cleaning.",
-                )
+                return self._reply(sender_mobile, self.SHORT_WORKER_CATEGORY_PROMPT)
 
         return super().process(sender_mobile, clean_message)
+
+    def _handle_active_worker_category(
+        self,
+        sender_mobile: str,
+        message: str,
+        detected_intent: str | None,
+    ) -> str | None:
+        normalized = message.lower()
+        if normalized in {"menu", "main menu", "మెను", "మెనూ"}:
+            return None
+
+        category = self.CATEGORY_MAP.get(normalized)
+        if category is None:
+            category = self.smart_job_message_service.extract(message).get("category")
+
+        if category is not None:
+            session = self.session_registry.get(sender_mobile)
+            session.data.setdefault("role", "WORKER")
+            session.data["category"] = category
+            return self._next_worker_prompt_or_save(sender_mobile)
+
+        if detected_intent == "JOB_SEEKER":
+            return self._reply(sender_mobile, self.SHORT_WORKER_CATEGORY_PROMPT)
+
+        return None
 
     def _record_capability(self, sender_mobile: str, capability: str) -> None:
         add_capability = getattr(self.user_repository, "add_capability", None)
@@ -247,7 +287,7 @@ class IntentAwareConversationService(ConversationService):
             if value is None:
                 value = self.smart_job_message_service.extract(message).get("category")
             if value is None:
-                return self._reply(sender_mobile, "ఏ పని కావాలో పేరు చెప్పండి. ఉదా: Delivery, Catering, Driver లేదా Cleaning.")
+                return self._reply(sender_mobile, self.SHORT_WORKER_CATEGORY_PROMPT)
             session.data["category"] = value
             return self._next_worker_prompt_or_save(sender_mobile)
         if session.step == ConversationStep.WORKER_EXPERIENCE:
