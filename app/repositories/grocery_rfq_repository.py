@@ -1,6 +1,6 @@
 """Smart Grocery/Kirana RFQ and seller quotation persistence."""
 from __future__ import annotations
-import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -63,6 +63,17 @@ class GroceryRFQRepository:
                     updated_at TEXT NOT NULL,
                     UNIQUE(quote_id, rfq_item_id)
                 );
+                CREATE TABLE IF NOT EXISTS grocery_rfq_targets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfq_id INTEGER NOT NULL,
+                    seller_user_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'SENT',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(rfq_id, seller_user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_grocery_rfq_buyer ON grocery_rfqs(buyer_user_id, status, id);
+                CREATE INDEX IF NOT EXISTS idx_grocery_target_seller ON grocery_rfq_targets(seller_user_id, status, id);
                 """
             )
 
@@ -77,6 +88,16 @@ class GroceryRFQRepository:
                     continue
                 conn.execute("INSERT INTO grocery_rfq_items(rfq_id,item_name,quantity,unit,created_at) VALUES(?,?,?,?,?)", (rfq_id, name, item.get("quantity"), item.get("unit"), now))
             return rfq_id
+
+    def get_rfq(self, rfq_id: int) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM grocery_rfqs WHERE id=?", (int(rfq_id),)).fetchone()
+        return dict(row) if row else None
+
+    def latest_open_for_buyer(self, buyer_user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM grocery_rfqs WHERE buyer_user_id=? AND status='OPEN' ORDER BY id DESC LIMIT 1", (str(buyer_user_id),)).fetchone()
+        return dict(row) if row else None
 
     def list_items(self, rfq_id: int) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -104,6 +125,9 @@ class GroceryRFQRepository:
     def submit_quote(self, quote_id: int) -> None:
         with self._connect() as conn:
             conn.execute("UPDATE grocery_quotes SET status='SUBMITTED',updated_at=? WHERE id=?", (self._now(), int(quote_id)))
+            row = conn.execute("SELECT rfq_id,seller_user_id FROM grocery_quotes WHERE id=?", (int(quote_id),)).fetchone()
+            if row:
+                conn.execute("UPDATE grocery_rfq_targets SET status='QUOTED',updated_at=? WHERE rfq_id=? AND seller_user_id=?", (self._now(), int(row["rfq_id"]), str(row["seller_user_id"])))
 
     def submitted_quotes(self, rfq_id: int) -> List[Dict[str, Any]]:
         with self._connect() as conn:
@@ -118,3 +142,55 @@ class GroceryRFQRepository:
                 data["items"] = [dict(row) for row in rows]
                 result.append(data)
             return result
+
+    def add_target(self, rfq_id: int, seller_user_id: str) -> bool:
+        now = self._now()
+        with self._connect() as conn:
+            cur = conn.execute("INSERT OR IGNORE INTO grocery_rfq_targets(rfq_id,seller_user_id,status,created_at,updated_at) VALUES(?,?,'SENT',?,?)", (int(rfq_id), str(seller_user_id), now, now))
+            return int(cur.rowcount or 0) > 0
+
+    def target_for_seller(self, seller_user_id: str, rfq_id: int | None = None) -> Optional[Dict[str, Any]]:
+        sql = """SELECT t.*,r.buyer_user_id,r.location_text FROM grocery_rfq_targets t JOIN grocery_rfqs r ON r.id=t.rfq_id WHERE t.seller_user_id=? AND t.status='SENT' AND r.status='OPEN'"""
+        params: List[Any] = [str(seller_user_id)]
+        if rfq_id is not None:
+            sql += " AND t.rfq_id=?"; params.append(int(rfq_id))
+        sql += " ORDER BY t.id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    def find_candidate_sellers(self, items: List[Dict[str, Any]], exclude_user_id: str | None = None, limit: int = 12) -> List[Dict[str, Any]]:
+        wanted = [self._norm(item.get("item_name") or item.get("name")) for item in items]
+        wanted = [item for item in wanted if item]
+        if not wanted:
+            return []
+        with self._connect() as conn:
+            try:
+                rows = conn.execute("SELECT seller_user_id,subject FROM seller_products WHERE active=1 ORDER BY updated_at DESC").fetchall()
+            except sqlite3.OperationalError:
+                return []
+        result: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            seller = str(row["seller_user_id"])
+            if exclude_user_id is not None and seller == str(exclude_user_id):
+                continue
+            subject = self._norm(row["subject"])
+            hits = sum(1 for wanted_item in wanted if self._similar(wanted_item, subject))
+            if not hits:
+                continue
+            entry = result.setdefault(seller, {"seller_user_id": seller, "matched_items": 0})
+            entry["matched_items"] += hits
+        return sorted(result.values(), key=lambda row: (-int(row["matched_items"]), str(row["seller_user_id"])))[: max(1, int(limit))]
+
+    @staticmethod
+    def _norm(value: Any) -> str:
+        return " ".join(re.sub(r"[^\w\u0C00-\u0C7F\u0900-\u097F]+", " ", str(value or "").casefold()).split())
+
+    @classmethod
+    def _similar(cls, a: str, b: str) -> bool:
+        if not a or not b:
+            return False
+        if a == b or a in b or b in a:
+            return True
+        at, bt = set(a.split()), set(b.split())
+        return bool(at and bt and (len(at & bt) / max(1, min(len(at), len(bt)))) >= 0.6)
