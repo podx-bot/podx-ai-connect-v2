@@ -9,6 +9,13 @@ from typing import Any, Dict
 
 
 class ProductBuyerRuntimeService:
+    PRODUCT_QUERY_WORDS = (
+        "?", "price", "rate", "ధర", "రేట్", "ఎంత", "stock", "available", "availability",
+        "ఉందా", "దొరుకుతుందా", "delivery", "డెలివరీ", "warranty", "return", "expiry",
+        "feature", "features", "details", "spec", "original", "brand", "model", "variant",
+        "size", "weight", "quantity", "color", "colour", "video", "demo", "quality",
+        "कीमत", "स्टॉक", "डिलीवरी", "वारंटी", "फीचर", "मॉडल",
+    )
     DECISION_WORDS = (
         "should i buy", "worth", "best", "recommend", "compare", "buy or not",
         "కొనాలా", "కొనవచ్చా", "మంచిదా", "బెస్ట్", "సరైనదా", "తీసుకోవాలా",
@@ -87,6 +94,8 @@ class ProductBuyerRuntimeService:
         }
 
     def process(self, sender_mobile: str, message: str) -> str | None:
+        if not self._looks_like_product_question(message):
+            return None
         packet = self.evaluate(sender_mobile, message)
         if packet is None:
             return None
@@ -108,6 +117,11 @@ class ProductBuyerRuntimeService:
         if self._is_decision_question(message):
             answer = self._append_decision_guidance(answer, packet)
         return answer
+
+    @classmethod
+    def _looks_like_product_question(cls, message: str) -> bool:
+        text = " ".join(str(message or "").casefold().split())
+        return any(word in text for word in cls.PRODUCT_QUERY_WORDS) or any(word in text for word in cls.DECISION_WORDS)
 
     @classmethod
     def _is_decision_question(cls, message: str) -> bool:
