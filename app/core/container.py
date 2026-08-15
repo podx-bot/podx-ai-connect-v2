@@ -93,7 +93,7 @@ class AppContainer:
             decision_service=self.decision_opportunity_service, seller_escalation=self.seller_ai_escalation_service)
         self.grocery_rfq_service = GroceryRFQService(self.grocery_rfq_repository)
         self.grocery_rfq_runtime_service = GroceryRFQRuntimeService(self.grocery_rfq_repository, self.grocery_rfq_service,
-            self.whatsapp_service, self._resolve_universal_contact)
+            self.whatsapp_service, self._resolve_universal_contact, user_repository=self.user_repository)
         self.conversation_service = UniversalAwareConversationService(response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service, image_service=self.universal_image_service, base_conversation=self.base_conversation_service,
             product_runtime=self.product_buyer_runtime_service, seller_escalation=self.seller_ai_escalation_service,
