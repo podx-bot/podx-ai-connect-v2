@@ -6,6 +6,8 @@ from app.repositories.demand_repository import DemandRepository
 from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
 from app.repositories.marketplace_repository import MarketplaceRepository
+from app.repositories.product_catalog_repository import ProductCatalogRepository
+from app.repositories.rag_knowledge_repository import RagKnowledgeRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.universal_demand_repository import UniversalDemandRepository
 from app.repositories.universal_image_pending_repository import UniversalImagePendingRepository
@@ -13,12 +15,17 @@ from app.repositories.universal_notification_repository import UniversalNotifica
 from app.repositories.user_repository import UserRepository
 from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
+from app.services.buyer_intelligence_service import BuyerIntelligenceService
+from app.services.decision_opportunity_service import DecisionOpportunityService
 from app.services.demand_capture_service import DemandCaptureService
 from app.services.easy_job_command_service import EasyJobCommandService
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
+from app.services.product_ai_desk_service import ProductAIDeskService
+from app.services.product_buyer_runtime_service import ProductBuyerRuntimeService
+from app.services.rag_service import RagService
 from app.services.sarvam_tts_voice_assistant_service import SarvamTTSVoiceAssistantService
 from app.services.session_registry import SessionRegistry
 from app.services.universal_aware_conversation_service import UniversalAwareConversationService
@@ -51,6 +58,8 @@ class AppContainer:
         self.universal_demand_repository = UniversalDemandRepository(self.settings.database_path)
         self.universal_notification_repository = UniversalNotificationRepository(self.settings.database_path)
         self.universal_image_pending_repository = UniversalImagePendingRepository(self.settings.database_path)
+        self.product_catalog_repository = ProductCatalogRepository(self.settings.database_path)
+        self.rag_knowledge_repository = RagKnowledgeRepository(self.settings.database_path)
 
         self.session_registry = SessionRegistry(repository=self.session_repository)
         self.intent_router_service = IntentRouterService(
@@ -114,11 +123,26 @@ class AppContainer:
             openai_model=self.settings.openai_vision_model,
             min_confidence=self.settings.image_ai_min_confidence,
         )
+
+        self.rag_service = RagService(self.rag_knowledge_repository)
+        self.product_ai_desk_service = ProductAIDeskService(self.product_catalog_repository)
+        self.buyer_intelligence_service = BuyerIntelligenceService()
+        self.decision_opportunity_service = DecisionOpportunityService()
+        self.product_buyer_runtime_service = ProductBuyerRuntimeService(
+            notification_repository=self.universal_notification_repository,
+            demand_repository=self.universal_demand_repository,
+            catalog_repository=self.product_catalog_repository,
+            product_desk=self.product_ai_desk_service,
+            rag_service=self.rag_service,
+            buyer_intelligence=self.buyer_intelligence_service,
+            decision_service=self.decision_opportunity_service,
+        )
         self.conversation_service = UniversalAwareConversationService(
             response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service,
             image_service=self.universal_image_service,
             base_conversation=self.base_conversation_service,
+            product_runtime=self.product_buyer_runtime_service,
         )
 
         self.audio_codec_service = AudioCodecService()

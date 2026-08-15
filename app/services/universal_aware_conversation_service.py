@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 class UniversalAwareConversationService:
     GREETING_WORDS={"hi","hello","hey","హాయ్","హలో","नमस्ते","हाय"}
     PRODUCT_QUESTION_WORDS=("?","ధర","price","ఎంత","available","availability","stock","size","weight","quantity","delivery","warranty","return","expiry","feature","features","original","color","colour","variant","దొరుకుతుందా","ఉందా","ఎలా","ఏమిటి","doubt","details")
-    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None)->None:
-        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation
+    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None)->None:
+        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime
     def process(self,sender_mobile:str,message:str)->str:
         clean=str(message or "").strip(); normalized=clean.casefold()
         if normalized in self.GREETING_WORDS:
@@ -15,6 +15,9 @@ class UniversalAwareConversationService:
             if welcome is not None:return welcome
         response=self.response_commands.process_text(sender_mobile=sender_mobile,message=clean)
         if response is not None:return response
+        if self.product_runtime is not None:
+            intelligent=self.product_runtime.process(sender_mobile=sender_mobile,message=clean)
+            if intelligent is not None:return intelligent
         faq=self._matched_product_faq(sender_mobile,clean)
         if faq is not None:return faq
         if self.image_service is not None:
