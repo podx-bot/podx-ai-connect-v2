@@ -7,25 +7,30 @@ from typing import Any, Dict, List, Optional
 
 class GroceryRFQRuntimeService:
     BUYER_PREFIXES = ("grocery", "groceries", "kirana", "గ్రోసరీ", "కిరాణా")
+    QUOTE_COMMANDS = {"grocery quotes", "kirana quotes", "గ్రోసరీ కోట్స్", "కిరాణా కోట్స్"}
 
-    def __init__(self, repository, ranking_service, whatsapp_service, contact_resolver) -> None:
+    def __init__(self, repository, ranking_service, whatsapp_service, contact_resolver, user_repository=None) -> None:
         self.repository = repository
         self.ranking = ranking_service
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
+        self.users = user_repository
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
         if not clean:
             return None
+        lowered = clean.casefold()
+        handles_message = lowered.startswith("gquote") or lowered in self.QUOTE_COMMANDS or any(lowered.startswith(prefix) for prefix in self.BUYER_PREFIXES)
+        if not handles_message:
+            return None
+        if not self._registered(sender_user_id):
+            return None
         seller_reply = self._consume_seller_quote(sender_user_id, clean)
         if seller_reply is not None:
             return seller_reply
-        lowered = clean.casefold()
-        if lowered in {"grocery quotes", "kirana quotes", "గ్రోసరీ కోట్స్", "కిరాణా కోట్స్"}:
+        if lowered in self.QUOTE_COMMANDS:
             return self._format_latest_quotes(sender_user_id)
-        if not any(lowered.startswith(prefix) for prefix in self.BUYER_PREFIXES):
-            return None
         items = self._parse_items(clean)
         if len(items) < 2:
             return "🛒 Grocery RFQ కోసం కనీసం 2 items పంపండి. Example: Grocery: rice 5kg, oil 1L, sugar 2kg"
@@ -44,6 +49,12 @@ class GroceryRFQRuntimeService:
         if sent == 0:
             return f"🛒 Grocery RFQ #{rfq_id} save చేశాను. ప్రస్తుతం catalog match ఉన్న seller దొరకలేదు; RFQ OPENగా ఉంది."
         return f"🛒 Grocery RFQ #{rfq_id} save అయింది. {sent} matching seller{'s' if sent != 1 else ''}కి quote request పంపాను. Quotes వచ్చినప్పుడు మీకు పంపిస్తాను."
+
+    def _registered(self, user_id: str) -> bool:
+        if self.users is None:
+            return True
+        user = self.users.find_by_whatsapp_mobile(str(user_id)) or {}
+        return int(user.get("registration_complete") or 0) == 1
 
     def _consume_seller_quote(self, seller_user_id: str, message: str) -> Optional[str]:
         if not message.casefold().startswith("gquote"):
