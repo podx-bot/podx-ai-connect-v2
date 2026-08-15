@@ -89,6 +89,11 @@ def test_decision_question_runs_buyer_and_decision_layers():
     assert "final fresh price & stock" in reply
 
 
+def test_product_runtime_passes_unrelated_intents_through():
+    service = runtime({"status": "ANSWERED", "answer": "product"})
+    assert service.process("buyer-1", "నాకు job కావాలి") is None
+
+
 class ResponseCommands:
     def process_text(self, **kwargs):
         return None
