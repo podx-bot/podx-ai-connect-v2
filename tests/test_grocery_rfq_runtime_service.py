@@ -1,5 +1,3 @@
-import sqlite3
-
 from app.repositories.grocery_rfq_repository import GroceryRFQRepository
 from app.repositories.product_catalog_repository import ProductCatalogRepository
 from app.services.grocery_rfq_runtime_service import GroceryRFQRuntimeService
@@ -12,6 +10,14 @@ class FakeWhatsApp:
 
     def send_text_message(self, mobile, text):
         self.sent.append((str(mobile), str(text)))
+
+
+class Users:
+    def __init__(self, complete):
+        self.complete = complete
+
+    def find_by_whatsapp_mobile(self, user_id):
+        return {"registration_complete": 1 if self.complete else 0}
 
 
 def resolver(user_id):
@@ -32,6 +38,13 @@ def test_parse_multi_item_grocery_list():
     assert [row["item_name"] for row in items] == ["rice", "oil", "sugar"]
     assert items[0]["quantity"] == 5.0
     assert items[1]["unit"].casefold() == "l"
+
+
+def test_unregistered_grocery_message_passes_to_onboarding(tmp_path):
+    _, repo, whatsapp, _ = build_runtime(tmp_path)
+    runtime = GroceryRFQRuntimeService(repo, GroceryRFQService(repo), whatsapp, resolver, user_repository=Users(False))
+    assert runtime.process("new-user", "Grocery: rice 5kg, oil 1L") is None
+    assert repo.latest_open_for_buyer("new-user") is None
 
 
 def test_grocery_request_targets_catalog_seller_once(tmp_path):
