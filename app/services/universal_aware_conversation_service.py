@@ -6,10 +6,13 @@ from zoneinfo import ZoneInfo
 class UniversalAwareConversationService:
     GREETING_WORDS={"hi","hello","hey","హాయ్","హలో","नमस्ते","हाय"}
     PRODUCT_QUESTION_WORDS=("?","ధర","price","ఎంత","available","availability","stock","size","weight","quantity","delivery","warranty","return","expiry","feature","features","original","color","colour","variant","దొరుకుతుందా","ఉందా","ఎలా","ఏమిటి","doubt","details")
-    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None)->None:
-        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime
+    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None)->None:
+        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation
     def process(self,sender_mobile:str,message:str)->str:
         clean=str(message or "").strip(); normalized=clean.casefold()
+        if self.seller_escalation is not None:
+            learned=self.seller_escalation.consume_seller_reply(sender_mobile,clean)
+            if learned is not None:return learned
         if normalized in self.GREETING_WORDS:
             welcome=self._registered_welcome_back(sender_mobile)
             if welcome is not None:return welcome
@@ -47,8 +50,7 @@ class UniversalAwareConversationService:
         if any(w in lowered for w in ("quantity","weight","size")):
             if request.get("quantity") is not None:return f"📦 ప్రస్తుతం requestలో quantity: {request.get('quantity')} {request.get('unit') or ''}.".strip()
             return f"📦 {subject} exact size/quantity seller-confirmed dataలో ఇంకా లేదు."
-        if "delivery" in lowered:
-            return "🚚 Seller confirm తర్వాత Order Continue ఎంచుకుంటే delivery address తీసుకుని order process చేస్తాను."
+        if "delivery" in lowered:return "🚚 Seller confirm తర్వాత Order Continue ఎంచుకుంటే delivery address తీసుకుని order process చేస్తాను."
         if any(w in lowered for w in ("warranty","return","expiry","feature","features","original","color","colour","variant","details","ఎలా","ఏమిటి","doubt")):
             return f"🤖 {subject} గురించి ఈ detail seller-confirmed product profileలో ఇంకా లేదు. నేను ఊహించి చెప్పను; seller-confirmed సమాచారం వచ్చిన తర్వాతనే చెప్తాను."
         return None
