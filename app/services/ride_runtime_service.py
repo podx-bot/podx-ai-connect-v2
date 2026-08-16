@@ -96,18 +96,15 @@ class RideRuntimeService:
         if status in {'ACCEPTED','REJECTED'}:
             passenger_mobile=self._mobile(str(booking['passenger_user_id']));ride=result.get('ride') or self.rides.get_ride(int(booking['ride_id'])) or {}
             if status=='ACCEPTED':
-                self.whatsapp.send_text_message(passenger_mobile,"✅ మీ PODX ride seat request accept అయింది.\n"+f"Ride #{ride.get('id')} {ride.get('origin')} → {ride.get('destination')}\n"+f"Date/Time: {ride.get('travel_date')} {ride.get('travel_time')}\nSeats: {booking['seats']}\n\nDriver contact unlock fee ₹50. Payment authorization తర్వాత RIDE UNLOCK {booking_id} పంపండి.")
+                self.whatsapp.send_text_message(passenger_mobile,"✅ మీ PODX ride seat request accept అయింది.\n"+f"Ride #{ride.get('id')} {ride.get('origin')} → {ride.get('destination')}\n"+f"Date/Time: {ride.get('travel_date')} {ride.get('travel_time')}\nSeats: {booking['seats']}\n\nContact unlock ready. RIDE UNLOCK {booking_id} పంపండి.")
                 return f"✅ Seat request #{booking_id} accept అయింది. Remaining seats: {ride.get('seats_available')}."
             self.whatsapp.send_text_message(passenger_mobile,f"Ride seat request #{booking_id} driver reject చేశారు.");return f"Seat request #{booking_id} reject చేశాను."
         return f"Seat request #{booking_id} update చేయలేకపోయాను."
 
     def _authorize_payment(self,sender_user_id,booking_id,payment_ref):
         if not self.admin_mobile or str(sender_user_id)!=self.admin_mobile:return "ఈ payment authorization command admin/internal useకి మాత్రమే."
-        if not payment_ref:return "Payment reference required."
-        if not self.rides.authorize_unlock(booking_id,payment_ref,50.0):return "Accepted booking దొరకలేదు; unlock authorize చేయలేదు."
-        booking=self.rides.get_booking(booking_id) or {}; passenger=self._mobile(str(booking.get('passenger_user_id') or ''))
-        if passenger:self.whatsapp.send_text_message(passenger,f"✅ Ride booking #{booking_id} contact unlock payment confirm అయింది. RIDE UNLOCK {booking_id} పంపండి.")
-        return f"✅ Ride booking #{booking_id} ₹50 contact unlock authorized."
+        if not self.rides.authorize_unlock(booking_id,'PODX_FREE',0.0):return "Accepted booking దొరకలేదు; unlock authorize చేయలేదు."
+        return f"✅ Ride booking #{booking_id} contact unlock ready. Payment gateway is disabled."
 
     def _unlock(self,sender_user_id,booking_id):
         booking=self.rides.get_booking(booking_id)
@@ -115,7 +112,8 @@ class RideRuntimeService:
         if str(booking.get('passenger_user_id'))!=str(sender_user_id):return "Contact unlock ఈ booking passengerకి మాత్రమే."
         if str(booking.get('status')).upper() not in {'ACCEPTED','COMPLETED'}:return "Driver seat accept చేసిన తర్వాత మాత్రమే contact unlock చేయవచ్చు."
         unlock=self.rides.get_unlock(booking_id) or {}
-        if str(unlock.get('payment_status')).upper()!='PAID':return f"🔒 Booking #{booking_id} contact unlock fee ₹50 ఇంకా authorized కాలేదు. Payment confirm అయిన తర్వాత retry చేయండి."
+        if str(unlock.get('payment_status')).upper() not in {'FREE','PAID'}:
+            if not self.rides.authorize_unlock(booking_id,'PODX_FREE',0.0):return f"Booking #{booking_id} contact unlock ప్రస్తుతం available లేదు."
         ride=self.rides.get_ride(int(booking['ride_id'])) or {}; driver_id=str(ride.get('driver_user_id') or '')
         driver=self._contact(driver_id); passenger=self._contact(str(sender_user_id)); self.rides.mark_unlocked(booking_id)
         driver_text=f"Name: {driver['name']}\nPhone: {driver['phone']}"; passenger_text=f"Name: {passenger['name']}\nPhone: {passenger['phone']}"

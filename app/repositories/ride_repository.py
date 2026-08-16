@@ -18,8 +18,13 @@ class RideRepository:
             CREATE INDEX IF NOT EXISTS idx_rides_route_date ON rides(origin,destination,travel_date,status);
             CREATE TABLE IF NOT EXISTS ride_bookings(id INTEGER PRIMARY KEY AUTOINCREMENT,ride_id INTEGER NOT NULL,passenger_user_id TEXT NOT NULL,seats INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'REQUESTED',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(ride_id,passenger_user_id,status));
             CREATE INDEX IF NOT EXISTS idx_ride_bookings_ride ON ride_bookings(ride_id,status);
-            CREATE TABLE IF NOT EXISTS ride_contact_unlocks(booking_id INTEGER PRIMARY KEY,amount REAL NOT NULL DEFAULT 50,currency TEXT NOT NULL DEFAULT 'INR',payment_status TEXT NOT NULL DEFAULT 'PENDING',payment_ref TEXT,authorized_at TEXT,unlocked_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS ride_contact_unlocks(booking_id INTEGER PRIMARY KEY,amount REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',payment_status TEXT NOT NULL DEFAULT 'FREE',payment_ref TEXT,authorized_at TEXT,unlocked_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
             """)
+            now=self._now()
+            conn.execute("""UPDATE ride_contact_unlocks
+                          SET amount=0,payment_status='FREE',payment_ref=COALESCE(payment_ref,'PODX_FREE'),
+                              authorized_at=COALESCE(authorized_at,created_at),updated_at=?
+                          WHERE payment_status='PENDING' AND amount=50""",(now,))
     def create_ride(self,driver_user_id,origin,destination,travel_date,travel_time,seats,fare_per_seat=None)->int:
         seats=max(1,int(seats)); now=self._now()
         with self._connect() as conn:
@@ -68,20 +73,20 @@ class RideRepository:
             seats=int(booking['seats']); available=int(ride['seats_available'])
             if seats>available or str(ride['status']).upper()!='OPEN':conn.rollback();return {'status':'NOT_ENOUGH_SEATS'}
             remaining=available-seats; ride_status='FULL' if remaining<=0 else 'OPEN'; now=self._now()
-            conn.execute("UPDATE ride_bookings SET status='ACCEPTED',updated_at=? WHERE id=?",(now,int(booking_id))); conn.execute("UPDATE rides SET seats_available=?,status=?,updated_at=? WHERE id=?",(remaining,ride_status,now,int(ride['id']))); conn.execute("INSERT OR IGNORE INTO ride_contact_unlocks(booking_id,amount,currency,payment_status,created_at,updated_at) VALUES(?,50,'INR','PENDING',?,?)",(int(booking_id),now,now)); conn.commit(); return {'status':'ACCEPTED','booking':dict(booking),'ride':{**dict(ride),'seats_available':remaining,'status':ride_status}}
+            conn.execute("UPDATE ride_bookings SET status='ACCEPTED',updated_at=? WHERE id=?",(now,int(booking_id))); conn.execute("UPDATE rides SET seats_available=?,status=?,updated_at=? WHERE id=?",(remaining,ride_status,now,int(ride['id']))); conn.execute("INSERT OR IGNORE INTO ride_contact_unlocks(booking_id,amount,currency,payment_status,payment_ref,authorized_at,created_at,updated_at) VALUES(?,0,'INR','FREE','PODX_FREE',?,?,?)",(int(booking_id),now,now,now)); conn.commit(); return {'status':'ACCEPTED','booking':dict(booking),'ride':{**dict(ride),'seats_available':remaining,'status':ride_status}}
     def get_unlock(self,booking_id):
         with self._connect() as conn: row=conn.execute("SELECT * FROM ride_contact_unlocks WHERE booking_id=?",(int(booking_id),)).fetchone()
         return dict(row) if row else None
-    def authorize_unlock(self,booking_id,payment_ref,amount=50.0)->bool:
+    def authorize_unlock(self,booking_id,payment_ref='PODX_FREE',amount=0.0)->bool:
         booking=self.get_booking(int(booking_id))
         if not booking or str(booking.get('status')).upper() not in {'ACCEPTED','COMPLETED'}:return False
-        now=self._now()
+        now=self._now(); amount=float(amount); status='FREE' if amount<=0 else 'PAID'
         with self._connect() as conn:
-            conn.execute("INSERT OR IGNORE INTO ride_contact_unlocks(booking_id,amount,currency,payment_status,created_at,updated_at) VALUES(?,?,'INR','PENDING',?,?)",(int(booking_id),float(amount),now,now)); cur=conn.execute("UPDATE ride_contact_unlocks SET amount=?,payment_status='PAID',payment_ref=?,authorized_at=COALESCE(authorized_at,?),updated_at=? WHERE booking_id=?",(float(amount),str(payment_ref),now,now,int(booking_id))); return int(cur.rowcount or 0)>0
+            conn.execute("INSERT OR IGNORE INTO ride_contact_unlocks(booking_id,amount,currency,payment_status,created_at,updated_at) VALUES(?,?,'INR',?,?,?)",(int(booking_id),amount,status,now,now)); cur=conn.execute("UPDATE ride_contact_unlocks SET amount=?,payment_status=?,payment_ref=?,authorized_at=COALESCE(authorized_at,?),updated_at=? WHERE booking_id=?",(amount,status,str(payment_ref),now,now,int(booking_id))); return int(cur.rowcount or 0)>0
     def mark_unlocked(self,booking_id)->bool:
         now=self._now()
         with self._connect() as conn:
-            cur=conn.execute("UPDATE ride_contact_unlocks SET unlocked_at=COALESCE(unlocked_at,?),updated_at=? WHERE booking_id=? AND payment_status='PAID'",(now,now,int(booking_id))); return int(cur.rowcount or 0)>0
+            cur=conn.execute("UPDATE ride_contact_unlocks SET unlocked_at=COALESCE(unlocked_at,?),updated_at=? WHERE booking_id=? AND payment_status IN ('FREE','PAID')",(now,now,int(booking_id))); return int(cur.rowcount or 0)>0
     def complete_booking(self,booking_id,driver_user_id)->dict[str,Any]:
         with self._connect() as conn:
             conn.execute('BEGIN IMMEDIATE'); booking=conn.execute("SELECT * FROM ride_bookings WHERE id=?",(int(booking_id),)).fetchone()
