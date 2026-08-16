@@ -4,8 +4,8 @@ import os
 import re
 
 class RideRuntimeService:
-    def __init__(self, repository, whatsapp_service, user_repository=None, admin_mobile: str | None = None) -> None:
-        self.rides=repository; self.whatsapp=whatsapp_service; self.users=user_repository
+    def __init__(self, repository, whatsapp_service, user_repository=None, admin_mobile: str | None = None, natural_intake=None) -> None:
+        self.rides=repository; self.whatsapp=whatsapp_service; self.users=user_repository; self.natural_intake=natural_intake
         self.admin_mobile=str(admin_mobile or os.getenv('PODX_ADMIN_MOBILE') or '').strip()
 
     def process(self,sender_user_id:str,message:str)->str|None:
@@ -22,6 +22,16 @@ class RideRuntimeService:
         if match:return self._book(sender_user_id,int(match.group(1)),int(match.group(2) or 1))
         match=re.fullmatch(r"(?i)RIDE\s+(ACCEPT|REJECT)\s+(\d+)",clean)
         if match:return self._decide(sender_user_id,int(match.group(2)),match.group(1).upper()=="ACCEPT")
+        if self.natural_intake is not None:
+            intake=self.natural_intake.process(str(sender_user_id),clean)
+            if intake is not None:
+                if intake.get('reply'):return str(intake['reply'])
+                if intake.get('action')=='POST':
+                    fare=intake.get('fare'); parts=[str(intake['origin']),str(intake['destination']),str(intake['travel_date']),str(intake['travel_time']),str(intake['seats'])]
+                    if fare is not None:parts.append(str(fare))
+                    return self._post(sender_user_id,' | '.join(parts))
+                if intake.get('action')=='FIND':
+                    return self._find(' | '.join([str(intake['origin']),str(intake['destination']),str(intake['travel_date'])]))
         return None
 
     def _post(self,sender_user_id,payload):
