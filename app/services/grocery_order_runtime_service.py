@@ -24,6 +24,10 @@ class GroceryOrderRuntimeService:
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
+        if self.dispatch_runtime is not None:
+            dispatch_reply = self.dispatch_runtime.process(sender_user_id, clean)
+            if dispatch_reply is not None:
+                return dispatch_reply
         lowered = clean.casefold()
         if lowered.startswith("gselect"):
             if not self._registered(sender_user_id):
