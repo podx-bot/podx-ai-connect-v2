@@ -45,7 +45,7 @@ def test_meet_create_find_join_leave_and_cancel(tmp_path):
     assert repo.attendee_count(1) == 1
 
     duplicate = runtime.process("buyer", "MEET JOIN 1")
-    assert "already" in duplicate.lower()
+    assert "ఇప్పటికే" in duplicate or "already" in duplicate.lower()
     assert repo.attendee_count(1) == 1
 
     denied = runtime.process("buyer", "MEET CANCEL 1")
