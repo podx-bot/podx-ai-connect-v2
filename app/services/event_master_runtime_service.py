@@ -1,38 +1,47 @@
-"""WhatsApp runtime for one-message Function/Event Master RFQs."""
+"""WhatsApp runtime for command and natural-language Function/Event Master RFQs."""
 from __future__ import annotations
 
 import re
 from typing import Optional
 
+from app.services.event_intent_extractor import EventIntentExtractor
+
 
 class EventMasterRuntimeService:
-    def __init__(self, event_service, user_repository=None, provider_runtime=None) -> None:
+    def __init__(self, event_service, user_repository=None, provider_runtime=None, intent_extractor=None) -> None:
         self.events = event_service
         self.users = user_repository
         self.provider_runtime = provider_runtime
+        self.intent_extractor = intent_extractor or EventIntentExtractor()
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
-        if not clean.casefold().startswith("event rfq "):
-            return None
+        command_mode = clean.casefold().startswith("event rfq ")
+
+        if command_mode:
+            parsed = self._parse_command(clean)
+            if isinstance(parsed, str):
+                return parsed
+        else:
+            parsed = self.intent_extractor.extract(clean)
+            if parsed is None:
+                return None
+            missing = parsed.get("missing") or []
+            if missing:
+                labels = {"guest_count": "ఎంతమంది guests?", "location": "function location ఎక్కడ?", "services": "ఏ services కావాలి?"}
+                questions = [labels[item] for item in missing if item in labels]
+                return "🎉 Function requirement అర్థమైంది. Complete RFQ create చేయడానికి ఇంకా: " + " ".join(questions)
+
         if self.users is not None:
             user = self.users.find_by_whatsapp_mobile(str(sender_user_id)) or {}
             if int(user.get("registration_complete") or 0) != 1:
                 return "ముందుగా PODX registration complete చేయండి."
-        payload = clean[len("event rfq "):]
-        parts = [part.strip() for part in payload.split("|")]
-        if len(parts) < 4:
-            return "Format: EVENT RFQ <FUNCTION> | <GUESTS> | <LOCATION> | <SERVICES> | <DATE optional>"
-        event_type = parts[0] or "Function"
-        try:
-            guests = int(re.sub(r"[^0-9]", "", parts[1]))
-        except ValueError:
-            guests = 0
-        if guests <= 0:
-            return "Guest count సరైన numberగా ఇవ్వండి."
-        location = parts[2]
-        services = [x.strip() for x in re.split(r"[,;+]", parts[3]) if x.strip()]
-        event_date = parts[4] if len(parts) > 4 and parts[4] else None
+
+        event_type = str(parsed.get("event_type") or "Function")
+        guests = int(parsed.get("guest_count") or 0)
+        location = str(parsed.get("location_text") or "").strip()
+        services = list(parsed.get("services") or [])
+        event_date = parsed.get("event_date")
         result = self.events.create_master_event(
             requester_user_id=sender_user_id,
             event_type=event_type,
@@ -59,3 +68,28 @@ class EventMasterRuntimeService:
             lines.append(f"• {row['service']}: #{row['rfq_id']} — {count} provider(s) notified")
         lines.append("ప్రతి serviceకి quotation independently compare/select చేయవచ్చు.")
         return "\n".join(lines)
+
+    @staticmethod
+    def _parse_command(clean: str):
+        payload = clean[len("event rfq "):]
+        parts = [part.strip() for part in payload.split("|")]
+        if len(parts) < 4:
+            return "Format: EVENT RFQ <FUNCTION> | <GUESTS> | <LOCATION> | <SERVICES> | <DATE optional>"
+        event_type = parts[0] or "Function"
+        try:
+            guests = int(re.sub(r"[^0-9]", "", parts[1]))
+        except ValueError:
+            guests = 0
+        if guests <= 0:
+            return "Guest count సరైన numberగా ఇవ్వండి."
+        location = parts[2]
+        services = [x.strip() for x in re.split(r"[,;+]", parts[3]) if x.strip()]
+        event_date = parts[4] if len(parts) > 4 and parts[4] else None
+        return {
+            "event_type": event_type,
+            "guest_count": guests,
+            "location_text": location,
+            "services": services,
+            "event_date": event_date,
+            "missing": [],
+        }
