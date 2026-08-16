@@ -4,7 +4,9 @@ import os
 from typing import Any, Dict
 
 from app.repositories.product_pricelist_pending_repository import ProductPriceListPendingRepository
+from app.repositories.reengagement_repository import ReengagementRepository
 from app.services.product_pricelist_ai_service import ProductPriceListAIService
+from app.services.smart_reengagement_service import SmartReengagementService
 
 
 class ProductBuyerRuntimeService:
@@ -21,7 +23,7 @@ class ProductBuyerRuntimeService:
 
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
                  buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
-                 price_list_ai=None) -> None:
+                 price_list_ai=None, whatsapp_service=None, reengagement_service=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -30,11 +32,22 @@ class ProductBuyerRuntimeService:
         self.buyer_intelligence = buyer_intelligence
         self.decision_service = decision_service
         self.seller_escalation = seller_escalation
+        db_path = getattr(catalog_repository, "db_path", "podx.db")
+        self.reengagement = reengagement_service
+        if self.reengagement is None and user_repository is not None and whatsapp_service is not None:
+            self.reengagement = SmartReengagementService(
+                demand_repository=demand_repository,
+                catalog_repository=catalog_repository,
+                user_repository=user_repository,
+                reengagement_repository=ReengagementRepository(db_path),
+                whatsapp_service=whatsapp_service,
+            )
         self.price_list_ai = price_list_ai or ProductPriceListAIService(
             api_key=str(os.getenv("GEMINI_API_KEY") or ""),
             catalog_repository=catalog_repository,
-            pending_repository=ProductPriceListPendingRepository(getattr(catalog_repository, "db_path", "podx.db")),
+            pending_repository=ProductPriceListPendingRepository(db_path),
             user_repository=user_repository,
+            reengagement_service=self.reengagement,
         )
 
     def evaluate(self, sender_mobile: str, message: str) -> Dict[str, Any] | None:
