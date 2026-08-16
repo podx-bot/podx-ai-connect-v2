@@ -10,6 +10,7 @@ from app.repositories.podx_meet_repository import PodxMeetRepository
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
+from app.services.ride_settlement_runtime_service import RideSettlementRuntimeService
 
 
 def create_app() -> FastAPI:
@@ -36,6 +37,16 @@ def create_app() -> FastAPI:
         kyc_runtime=kyc_runtime,
         delegate=container.conversation_service,
     )
+
+    settlement_runtime = RideSettlementRuntimeService(
+        delegate=container.conversation_service,
+        ride_repository=container.ride_repository,
+        whatsapp_service=container.whatsapp_service,
+        user_repository=container.user_repository,
+    )
+    container.ride_settlement_runtime_service = settlement_runtime
+    container.ride_settlement_repository = settlement_runtime.settlements
+    container.conversation_service = settlement_runtime
 
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
