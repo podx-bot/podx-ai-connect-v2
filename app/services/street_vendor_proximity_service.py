@@ -10,7 +10,7 @@ from typing import Optional
 class StreetVendorProximityService:
     def __init__(self, repository, demand_repository, user_repository, whatsapp_service,
                  radius_km: float = 1.5, repeat_after_hours: float = 2.0,
-                 meaningful_move_km: float = 0.5) -> None:
+                 meaningful_move_km: float = 0.5, alert_preferences=None) -> None:
         self.repository = repository
         self.demands = demand_repository
         self.users = user_repository
@@ -18,6 +18,18 @@ class StreetVendorProximityService:
         self.radius_km = float(radius_km)
         self.repeat_after = timedelta(hours=float(repeat_after_hours))
         self.meaningful_move_km = float(meaningful_move_km)
+        self.alert_preferences = alert_preferences or self._auto_alert_preferences(repository)
+
+    @staticmethod
+    def _auto_alert_preferences(repository):
+        try:
+            db_path = str(getattr(repository, "db_path", "") or "")
+            if not db_path:
+                return None
+            from app.repositories.proactive_alert_preference_repository import ProactiveAlertPreferenceRepository
+            return ProactiveAlertPreferenceRepository(db_path)
+        except Exception:
+            return None
 
     def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
@@ -78,6 +90,8 @@ class StreetVendorProximityService:
             if not self._subject_match(items_text, subject):
                 continue
             buyer_mobile = str(demand.get("user_id") or "").strip()
+            if self.alert_preferences is not None and not self.alert_preferences.is_enabled(buyer_mobile):
+                continue
             buyer_lat, buyer_lon = self._buyer_location(demand, buyer_mobile)
             if buyer_lat is None or buyer_lon is None:
                 continue
