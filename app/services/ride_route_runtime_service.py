@@ -3,15 +3,29 @@ from __future__ import annotations
 
 import re
 
+from app.services.local_mobility_runtime_service import LocalMobilityRuntimeService
+
 
 class RideRouteRuntimeService:
-    def __init__(self, ride_runtime, route_service) -> None:
+    def __init__(self, ride_runtime, route_service, mobility_runtime=None) -> None:
         self.ride_runtime = ride_runtime
         self.route = route_service
+        users = getattr(ride_runtime, "users", None)
+        whatsapp = getattr(ride_runtime, "whatsapp", None)
+        db_path = getattr(getattr(ride_runtime, "rides", None), "db_path", "podx.db")
+        self.mobility = mobility_runtime or (
+            LocalMobilityRuntimeService(db_path, users, whatsapp)
+            if users is not None and whatsapp is not None else None
+        )
 
     def process(self, sender_user_id: str, message: str) -> str | None:
         clean = " ".join(str(message or "").strip().split())
         lowered = clean.casefold()
+
+        if self.mobility is not None:
+            mobility_reply = self.mobility.process(sender_user_id, clean)
+            if mobility_reply is not None:
+                return mobility_reply
 
         stops = re.match(r"(?i)^RIDE\s+STOPS\s+(\d+)\s*\|\s*(.+)$", clean)
         if stops:
@@ -60,7 +74,12 @@ class RideRouteRuntimeService:
                     ride_id = self._extract_ride_id(reply)
                     if ride_id:
                         ride = self.ride_runtime.rides.get_ride(ride_id) or {}
-                        self.route.initialize_route(ride_id, str(ride.get("origin") or parsed["origin"]), str(ride.get("destination") or parsed["destination"]), str(sender_user_id))
+                        self.route.initialize_route(
+                            ride_id,
+                            str(ride.get("origin") or parsed["origin"]),
+                            str(ride.get("destination") or parsed["destination"]),
+                            str(sender_user_id),
+                        )
                     return reply
 
         return self.ride_runtime.process(sender_user_id, clean)
