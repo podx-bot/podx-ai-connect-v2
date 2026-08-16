@@ -14,6 +14,19 @@ class EasyJobCommandService:
     REJECT_WORDS = {
         "2", "no", "వద్దు", "చేయను", "రాను", "నేను రాను", "నాకు వద్దు",
     }
+    EMPLOYER_CONFIRM_WORDS = {
+        "confirm", "confirm చేయండి", "ఇతనిని తీసుకోండి", "ఇతనే సరే",
+        "ఈ worker సరే", "worker confirm", "అతనిని confirm చేయండి",
+    }
+    EMPLOYER_REJECT_WORDS = {
+        "reject worker", "ఈ worker వద్దు", "ఇతను వద్దు", "అతను వద్దు",
+    }
+    CONTACT_PHRASES = (
+        "phone number", "contact number", "mobile number", "give number",
+        "ఫోన్ నంబర్", "కాంటాక్ట్ నంబర్", "నంబర్ ఇవ్వండి", "ఫోన్ ఇవ్వండి",
+        "location share చేయలేను", "లోకేషన్ షేర్ చేయలేను",
+        "location పంపలేను", "లోకేషన్ పంపలేను",
+    )
 
     ONWAY_PHRASES = (
         "బయలుదేరాను", "బయలుదేరుతున్నాను", "వెళ్తున్నాను", "వస్తున్నాను",
@@ -59,6 +72,27 @@ class EasyJobCommandService:
                     f"REJECT {pending_job_id}",
                 )
 
+        pending_worker = self._latest_pending_worker_for_employer(sender_mobile)
+        if pending_worker is not None:
+            job_id, worker_mobile = pending_worker
+            if normalized in self.EMPLOYER_CONFIRM_WORDS:
+                return self.lifecycle_service.process_text(
+                    sender_mobile,
+                    f"CONFIRM {job_id} {worker_mobile}",
+                )
+            if normalized in self.EMPLOYER_REJECT_WORDS:
+                return self.lifecycle_service.process_text(
+                    sender_mobile,
+                    f"REJECTWORKER {job_id} {worker_mobile}",
+                )
+
+        if self._contains_any(normalized, self.CONTACT_PHRASES):
+            fallback = getattr(self.lifecycle_service, "contact_fallback_for_active_job", None)
+            if callable(fallback):
+                result = fallback(sender_mobile)
+                if result is not None:
+                    return result
+
         active = self.repository.active_assignment_for_worker(sender_mobile)
         if not active:
             return None
@@ -100,8 +134,30 @@ class EasyJobCommandService:
         )
         return int(row["employer_job_id"]) if row else None
 
+    def _latest_pending_worker_for_employer(self, employer_mobile: str) -> Optional[tuple[int, str]]:
+        row = self.repository.database.fetchone(
+            """
+            SELECT a.employer_job_id, a.worker_mobile
+            FROM job_assignments a
+            JOIN employer_jobs j ON j.id = a.employer_job_id
+            WHERE j.employer_mobile = ?
+              AND a.status = 'PENDING_CONFIRMATION'
+              AND j.status IN ('OPEN', 'FILLED')
+            ORDER BY a.updated_at DESC, a.id DESC
+            LIMIT 1
+            """,
+            (employer_mobile,),
+        )
+        if not row:
+            return None
+        return int(row["employer_job_id"]), str(row["worker_mobile"])
+
     def _could_be_easy_job_command(self, normalized: str) -> bool:
         if normalized in self.ACCEPT_WORDS or normalized in self.REJECT_WORDS:
+            return True
+        if normalized in self.EMPLOYER_CONFIRM_WORDS or normalized in self.EMPLOYER_REJECT_WORDS:
+            return True
+        if self._contains_any(normalized, self.CONTACT_PHRASES):
             return True
         lifecycle_phrases = (
             self.ONWAY_PHRASES
