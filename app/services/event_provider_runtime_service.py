@@ -1,10 +1,11 @@
-"""Provider targeting and quote lifecycle for Event Master child RFQs."""
+"""Provider targeting, quote lifecycle and final booking for Event Master RFQs."""
 from __future__ import annotations
 
 import math
 import re
 from typing import Optional
 
+from app.services.event_booking_service import EventBookingService
 from app.services.event_master_rfq_service import EventMasterRFQService
 
 
@@ -24,6 +25,7 @@ class EventProviderRuntimeService:
         self.catering = catering_catalog_repository
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
+        self.booking = EventBookingService(rfq_repository, whatsapp_service, contact_resolver)
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
@@ -34,6 +36,10 @@ class EventProviderRuntimeService:
             return self._compare(sender_user_id, clean)
         if lowered.startswith("eselect "):
             return self._select(sender_user_id, clean)
+        if lowered.startswith("esummary "):
+            return self._summary(sender_user_id, clean)
+        if lowered.startswith("ebook "):
+            return self._book(sender_user_id, clean)
         return None
 
     def route_children(self, event_result: dict) -> dict:
@@ -162,9 +168,69 @@ class EventProviderRuntimeService:
         service_type = str(metadata.get("service_type") or "Service").title()
         self.whatsapp.send_text_message(
             str(provider.get("mobile") or provider_id),
-            f"✅ మీ {service_type} Quote #{quote_id} Event RFQ #{rfq_id}కి select అయింది.",
+            f"✅ మీ {service_type} Quote #{quote_id} Event RFQ #{rfq_id}కి select అయింది. Final booking confirmation కోసం wait చేయండి.",
         )
-        return f"✅ {service_type} Quote #{quote_id} select అయింది. Provider {provider_id}. Total ₹{float(result.get('total') or 0):.0f}."
+        master_id = int(metadata.get("master_event_rfq_id"))
+        return (
+            f"✅ {service_type} Quote #{quote_id} select అయింది. Provider {provider_id}. Total ₹{float(result.get('total') or 0):.0f}.\n"
+            f"Full Event package చూడటానికి: ESUMMARY {master_id}"
+        )
+
+    def _summary(self, requester_user_id: str, message: str) -> str:
+        match = re.match(r"^esummary\s+#?(\d+)$", message, re.I)
+        if not match:
+            return "Format: ESUMMARY <MASTER EVENT RFQ ID>"
+        master_id = int(match.group(1))
+        result = self.booking.package_summary(master_id, requester_user_id)
+        if result.get("status") == "MASTER_NOT_FOUND":
+            return f"Master Event RFQ #{master_id} దొరకలేదు."
+        if result.get("status") == "NOT_OWNER":
+            return f"Master Event RFQ #{master_id} మీది కాదు."
+        master = result["master"]
+        lines = [
+            f"🎉 Event Package Summary #{master_id}",
+            f"{master.get('title') or 'Function'}",
+            f"Date: {master.get('event_date') or '-'}",
+            f"Location: {master.get('location_text') or '-'}",
+            "Selected services:",
+        ]
+        if result["selected"]:
+            for row in result["selected"]:
+                lines.append(f"• {row['service']}: {row['provider_user_id']} — ₹{row['total']:.0f}")
+        else:
+            lines.append("• ఇంకా ఏ service select కాలేదు")
+        if result["missing"]:
+            lines.append("Pending: " + ", ".join(result["missing"]))
+        lines.append(f"Combined selected total: ₹{result['combined_total']:.0f}")
+        if result["ready_to_book"]:
+            lines.append(f"Final booking: EBOOK {master_id}")
+        else:
+            lines.append("అన్ని requested services select చేసిన తర్వాత final booking చేయవచ్చు.")
+        return "\n".join(lines)
+
+    def _book(self, requester_user_id: str, message: str) -> str:
+        match = re.match(r"^ebook\s+#?(\d+)$", message, re.I)
+        if not match:
+            return "Format: EBOOK <MASTER EVENT RFQ ID>"
+        master_id = int(match.group(1))
+        result = self.booking.confirm_booking(master_id, requester_user_id)
+        status = result.get("status")
+        if status == "MASTER_NOT_FOUND":
+            return f"Master Event RFQ #{master_id} దొరకలేదు."
+        if status == "NOT_OWNER":
+            return f"Master Event RFQ #{master_id} మీది కాదు."
+        if status == "INCOMPLETE_SELECTION":
+            return "Final bookingకి ముందు ఇంకా select చేయాల్సిన services: " + ", ".join(result.get("missing") or [])
+        if status == "ALREADY_BOOKED":
+            return f"✅ Event #{master_id} ఇప్పటికే booked అయింది. Combined total ₹{result['combined_total']:.0f}."
+        if status != "BOOKED":
+            return f"Event booking complete చేయలేకపోయాను. Status: {status}"
+        return (
+            f"✅ Event Booking Confirmed #{master_id}\n"
+            f"{len(result['selected'])} services confirmed\n"
+            f"Combined total: ₹{result['combined_total']:.0f}\n"
+            f"Selected providersకి final confirmation పంపబడింది."
+        )
 
     @staticmethod
     def _distance_km(lat1, lon1, lat2, lon2):
