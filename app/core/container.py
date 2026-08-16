@@ -2,6 +2,7 @@ from app.core.settings import load_settings
 from app.database.database import Database
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.catering_catalog_repository import CateringCatalogRepository
+from app.repositories.catering_menu_pending_repository import CateringMenuPendingRepository
 from app.repositories.delivery_log_repository import DeliveryLogRepository
 from app.repositories.demand_repository import DemandRepository
 from app.repositories.grocery_order_repository import GroceryOrderRepository
@@ -22,6 +23,7 @@ from app.repositories.user_repository import UserRepository
 from app.services.appointment_service import AppointmentService
 from app.services.audio_codec_service import AudioCodecService
 from app.services.buyer_intelligence_service import BuyerIntelligenceService
+from app.services.catering_menu_ai_service import CateringMenuAIService
 from app.services.catering_rfq_runtime_service import CateringRFQRuntimeService
 from app.services.decision_opportunity_service import DecisionOpportunityService
 from app.services.demand_capture_service import DemandCaptureService
@@ -65,6 +67,7 @@ class AppContainer:
         self.universal_image_pending_repository = UniversalImagePendingRepository(self.settings.database_path)
         self.universal_rfq_repository = UniversalRFQRepository(self.settings.database_path)
         self.catering_catalog_repository = CateringCatalogRepository(self.settings.database_path)
+        self.catering_menu_pending_repository = CateringMenuPendingRepository(self.settings.database_path)
         self.grocery_rfq_repository = GroceryRFQRepository(self.settings.database_path)
         self.grocery_order_repository = GroceryOrderRepository(self.settings.database_path)
         self.local_dispatch_repository = LocalDispatchRepository(self.settings.database_path)
@@ -104,6 +107,11 @@ class AppContainer:
             product_desk=self.product_ai_desk_service, rag_service=self.rag_service, buyer_intelligence=self.buyer_intelligence_service,
             decision_service=self.decision_opportunity_service, seller_escalation=self.seller_ai_escalation_service)
         self.universal_rfq_service = UniversalRFQService(self.universal_rfq_repository)
+        self.catering_menu_ai_service = CateringMenuAIService(
+            api_key=self.settings.gemini_api_key,
+            catalog_repository=self.catering_catalog_repository,
+            pending_repository=self.catering_menu_pending_repository,
+        )
         self.catering_rfq_runtime_service = CateringRFQRuntimeService(
             self.catering_catalog_repository, self.universal_rfq_repository, self.universal_rfq_service,
             self.whatsapp_service, self._resolve_universal_contact, user_repository=self.user_repository)
@@ -120,7 +128,7 @@ class AppContainer:
             live_capture=self.universal_live_capture_service, image_service=self.universal_image_service, base_conversation=self.base_conversation_service,
             product_runtime=self.product_buyer_runtime_service, seller_escalation=self.seller_ai_escalation_service,
             grocery_runtime=self.grocery_rfq_runtime_service, grocery_order_runtime=self.grocery_order_runtime_service,
-            catering_runtime=self.catering_rfq_runtime_service)
+            catering_runtime=self.catering_rfq_runtime_service, catering_menu_ai=self.catering_menu_ai_service)
         self.audio_codec_service = AudioCodecService()
         self.voice_assistant_service = SarvamTTSVoiceAssistantService(sarvam_api_key=self.settings.sarvam_api_key,
             sarvam_model=self.settings.sarvam_stt_model, sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,
