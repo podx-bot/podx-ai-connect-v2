@@ -3,9 +3,11 @@ from app.database.database import Database
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.delivery_log_repository import DeliveryLogRepository
 from app.repositories.demand_repository import DemandRepository
+from app.repositories.grocery_order_repository import GroceryOrderRepository
 from app.repositories.grocery_rfq_repository import GroceryRFQRepository
 from app.repositories.inbound_message_repository import InboundMessageRepository
 from app.repositories.job_lifecycle_repository import JobLifecycleRepository
+from app.repositories.local_dispatch_repository import LocalDispatchRepository
 from app.repositories.marketplace_repository import MarketplaceRepository
 from app.repositories.product_catalog_repository import ProductCatalogRepository
 from app.repositories.rag_knowledge_repository import RagKnowledgeRepository
@@ -21,6 +23,7 @@ from app.services.buyer_intelligence_service import BuyerIntelligenceService
 from app.services.decision_opportunity_service import DecisionOpportunityService
 from app.services.demand_capture_service import DemandCaptureService
 from app.services.easy_job_command_service import EasyJobCommandService
+from app.services.grocery_order_runtime_service import GroceryOrderRuntimeService
 from app.services.grocery_rfq_runtime_service import GroceryRFQRuntimeService
 from app.services.grocery_rfq_service import GroceryRFQService
 from app.services.intent_router_service import IntentRouterService
@@ -56,6 +59,8 @@ class AppContainer:
         self.universal_notification_repository = UniversalNotificationRepository(self.settings.database_path)
         self.universal_image_pending_repository = UniversalImagePendingRepository(self.settings.database_path)
         self.grocery_rfq_repository = GroceryRFQRepository(self.settings.database_path)
+        self.grocery_order_repository = GroceryOrderRepository(self.settings.database_path)
+        self.local_dispatch_repository = LocalDispatchRepository(self.settings.database_path)
         self.product_catalog_repository = ProductCatalogRepository(self.settings.database_path)
         self.rag_knowledge_repository = RagKnowledgeRepository(self.settings.database_path)
         self.seller_ai_escalation_repository = SellerAIEscalationRepository(self.settings.database_path)
@@ -94,10 +99,13 @@ class AppContainer:
         self.grocery_rfq_service = GroceryRFQService(self.grocery_rfq_repository)
         self.grocery_rfq_runtime_service = GroceryRFQRuntimeService(self.grocery_rfq_repository, self.grocery_rfq_service,
             self.whatsapp_service, self._resolve_universal_contact, user_repository=self.user_repository)
+        self.grocery_order_runtime_service = GroceryOrderRuntimeService(
+            self.grocery_rfq_repository, self.grocery_order_repository, self.local_dispatch_repository,
+            self._resolve_universal_contact, user_repository=self.user_repository)
         self.conversation_service = UniversalAwareConversationService(response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service, image_service=self.universal_image_service, base_conversation=self.base_conversation_service,
             product_runtime=self.product_buyer_runtime_service, seller_escalation=self.seller_ai_escalation_service,
-            grocery_runtime=self.grocery_rfq_runtime_service)
+            grocery_runtime=self.grocery_rfq_runtime_service, grocery_order_runtime=self.grocery_order_runtime_service)
         self.audio_codec_service = AudioCodecService()
         self.voice_assistant_service = SarvamTTSVoiceAssistantService(sarvam_api_key=self.settings.sarvam_api_key,
             sarvam_model=self.settings.sarvam_stt_model, sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,

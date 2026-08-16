@@ -1,12 +1,26 @@
 """Handle role-safe Universal Match + Product Conversion V3 responses."""
 from __future__ import annotations
+
 import re
 from typing import Any, Optional
 
 
 class UniversalResponseCommandService:
-    CONFIRM_WORDS = {"confirm", "yes", "ok", "okay", "సరే", "ఓకే", "అవును", "haan", "theek hai"}
-    DECLINE_WORDS = {"decline", "reject", "no", "cancel", "not interested", "వద్దు", "లేదు", "క్యాన్సిల్", "ఆసక్తి లేదు", "నో", "nahi", "mat karo"}
+    INTEREST_WORDS = {
+        "interested", "interest", "yes interested", "i am interested", "i'm interested",
+        "వస్తాను", "చేస్తాను", "ఇస్తాను", "కావాలి", "సరే చేస్తాను",
+        "నేను వస్తాను", "నేను చేస్తాను", "నేను ఇస్తాను",
+        "haan", "ha", "karunga", "aaunga", "de sakta hu", "de sakta hoon",
+    }
+    CONFIRM_WORDS = {
+        "confirm", "yes", "ok", "okay", "share", "share contact", "contact share",
+        "సరే", "ఓకే", "అవును", "షేర్ చేయండి", "కాంటాక్ట్ షేర్ చేయండి",
+        "haan", "theek hai",
+    }
+    DECLINE_WORDS = {
+        "decline", "reject", "no", "cancel", "not interested", "వద్దు", "లేదు",
+        "క్యాన్సిల్", "ఆసక్తి లేదు", "నో", "nahi", "mat karo",
+    }
 
     def __init__(self, demand_repository, notification_service, notification_repository) -> None:
         self.demands = demand_repository
@@ -34,10 +48,29 @@ class UniversalResponseCommandService:
             if match:
                 return handler(match)
 
+        # Legacy explicit responder-interest command remains valid only for a target that was notified.
+        legacy_interest = re.match(r"^(?:INTERESTED|INTEREST)\s*#?(\d+)\s*$", text, re.I)
+        if legacy_interest:
+            return self._legacy_interest(sender_mobile, int(legacy_interest.group(1)))
+
+        explicit_confirm = re.match(r"^(?:CONFIRM|SHARE|YES|OK|OKAY)\s*#?(\d+)\s*$", text, re.I)
+        if explicit_confirm:
+            return self._legacy_consent_for_request(sender_mobile, int(explicit_confirm.group(1)), True)
+
+        explicit_decline = re.match(r"^(?:DECLINE|REJECT|NO|CANCEL)\s*#?(\d+)\s*$", text, re.I)
+        if explicit_decline:
+            return self._legacy_consent_for_request(sender_mobile, int(explicit_decline.group(1)), False)
+
         waiting = self.notification_repository.latest_waiting_address_for_buyer(sender_mobile)
         if waiting and not self._looks_like_command(text):
-            return self._save_address(sender_mobile, int(waiting["request_id"]), str(waiting["responder_user_id"]), text)
+            return self._save_address(
+                sender_mobile,
+                int(waiting["request_id"]),
+                str(waiting["responder_user_id"]),
+                text,
+            )
 
+        # Product Conversion V3 seller confirmation flow.
         pending = self.notification_repository.latest_pending_interest_for_seller(sender_mobile)
         if pending:
             request_id = int(pending["request_id"])
@@ -47,15 +80,64 @@ class UniversalResponseCommandService:
             if self._is_decline(text):
                 return self._seller_decision(sender_mobile, request_id, buyer, False)
 
-        legacy = re.match(r"^(?:INTERESTED|INTEREST)\s*#?(\d+)\s*$", text, re.I)
-        if legacy:
-            request = self.demands.get(int(legacy.group(1)))
-            if request and str(request.get("side") or "").upper() == "OFFER":
-                return self._buyer_interest(sender_mobile, int(legacy.group(1)), str(request.get("user_id")))
-            return "ఈ పాత match button expire అయింది. కొత్త match notificationలోని button ఉపయోగించండి."
+        # Legacy Universal Flow: a targeted responder can answer naturally (e.g. "ఇస్తాను").
+        targeted = self.notification_repository.latest_sent_request_for_target(sender_mobile)
+        if targeted and self._is_interest(text):
+            return self._legacy_interest(sender_mobile, int(targeted["request_id"]))
+
+        # Legacy requester consent remains natural-language compatible.
+        pending_consent = self.notification_repository.latest_pending_interest_for_requester(sender_mobile)
+        if pending_consent:
+            request_id = int(pending_consent["request_id"])
+            responder = str(pending_consent["responder_user_id"])
+            if self._is_confirm(text):
+                return self._legacy_consent(sender_mobile, request_id, responder, True)
+            if self._is_decline(text):
+                return self._legacy_consent(sender_mobile, request_id, responder, False)
+
         if re.match(r"^(?:NOT_INTERESTED|NOT INTERESTED)\s*#?(\d+)\s*$", text, re.I):
             return "సరే 👍 ఈ matchని skip చేశాను."
         return None
+
+    def _legacy_interest(self, responder: str, request_id: int) -> str:
+        request = self.demands.get(request_id)
+        if not request or str(request.get("status") or "").upper() != "ACTIVE":
+            return "ఈ PODX request ఇప్పుడు activeలో లేదు."
+        if str(request.get("user_id")) == str(responder):
+            return "ఇది మీ స్వంత request."
+        if not self.notification_repository.was_targeted(request_id, responder):
+            return "ఈ request మీకు పంపబడిన notificationగా కనిపించడం లేదు."
+        result = self.notifications.register_interest(request, responder)
+        if result.get("status") == "WAITING_REQUESTER_CONSENT":
+            return "✅ మీ interest పంపించాను. అవతలి వ్యక్తి contact shareకి confirm చేస్తే వెంటనే మీకు చెప్తాను."
+        return "మీ interest save చేశాను."
+
+    def _legacy_consent_for_request(self, requester: str, request_id: int, accepted: bool) -> str:
+        pending = self.notification_repository.latest_pending_interest_for_requester(requester)
+        if not pending or int(pending.get("request_id") or 0) != int(request_id):
+            return "ఈ requestకి pending contact confirmation దొరకలేదు."
+        return self._legacy_consent(
+            requester,
+            request_id,
+            str(pending["responder_user_id"]),
+            accepted,
+        )
+
+    def _legacy_consent(self, requester: str, request_id: int, responder: str, accepted: bool) -> str:
+        request = self.demands.get(request_id)
+        if not request:
+            return "ఆ PODX request దొరకలేదు."
+        if str(request.get("user_id")) != str(requester):
+            return "ఈ requestకి contact share confirm చేసే permission మీకు లేదు."
+        result = self.notifications.confirm_and_share_contacts(request, responder, accepted)
+        status = result.get("status")
+        return {
+            "CONTACT_SHARED": "✅ ఇద్దరికీ contact details share చేశాను. మీరు directగా మాట్లాడుకోవచ్చు.",
+            "DECLINED": "సరే. ఈ వ్యక్తితో contact share చేయలేదు.",
+            "ALREADY_SHARED": "ఈ match contact details ఇప్పటికే share అయ్యాయి.",
+            "INTEREST_NOT_FOUND": "ఈ వ్యక్తి interest record దొరకలేదు.",
+            "CONTACT_SHARE_PARTIAL_FAILURE": "Contact shareలో ఒక delivery సమస్య వచ్చింది. మళ్లీ ప్రయత్నిస్తాను.",
+        }.get(status, "మీ response save చేశాను.")
 
     def _buyer_interest(self, buyer: str, request_id: int, seller: str) -> str:
         request = self.demands.get(request_id)
@@ -141,8 +223,16 @@ class UniversalResponseCommandService:
         }.get(status, "Direct Talk request save చేశాను.")
 
     @classmethod
+    def _is_interest(cls, text: str) -> bool:
+        lowered = text.lower().strip()
+        return lowered in cls.INTEREST_WORDS or any(
+            word in lowered for word in ("interested", "వస్తాను", "చేస్తాను", "ఇస్తాను")
+        )
+
+    @classmethod
     def _is_confirm(cls, text: str) -> bool:
-        return text.lower().strip() in cls.CONFIRM_WORDS
+        lowered = text.lower().strip()
+        return lowered in cls.CONFIRM_WORDS or "share చేయ" in lowered or "షేర్ చేయ" in lowered
 
     @classmethod
     def _is_decline(cls, text: str) -> bool:

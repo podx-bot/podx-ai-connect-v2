@@ -110,9 +110,9 @@ class UniversalLiveCaptureService:
             if sent > 0:
                 if side == "NEED":
                     return (f"{prefix}✅ {len(matches)} seller match{'es' if len(matches) != 1 else ''} దొరికాయి. "
-                            f"{sent} option{'s' if sent != 1 else ''} మీకు పంపాను. నచ్చిన sellerపై 'ఆసక్తి ఉంది' నొక్కండి.")
+                            f"{sent} notification option{'s' if sent != 1 else ''} మీకు పంపాను. నచ్చిన sellerపై 'ఆసక్తి ఉంది' నొక్కండి.")
                 return (f"{prefix}✅ {len(matches)} buyer match{'es' if len(matches) != 1 else ''} దొరికాయి. "
-                        f"{sent} buyer{'s' if sent != 1 else ''}కి మీ offer పంపాను. Buyer ఆసక్తి చూపితే మీకు Confirm వస్తుంది.")
+                        f"{sent} buyer notification{'s' if sent != 1 else ''}కి మీ offer పంపాను. Buyer ఆసక్తి చూపితే మీకు Confirm వస్తుంది.")
             if failed > 0:
                 return (f"{prefix}✅ సరైన match దొరికింది, కానీ WhatsApp notification delivery ప్రస్తుతం fail అయింది. "
                         "మీ request ACTIVEగా ఉంది; deliveryని మళ్లీ ప్రయత్నించవచ్చు.")
@@ -131,9 +131,9 @@ class UniversalLiveCaptureService:
             if sent > 0:
                 side = str(request.get("side") or "").upper()
                 if side == "NEED":
-                    return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ {sent} relevant seller option{'s' if sent != 1 else ''} "
+                    return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ {sent} relevant seller notification option{'s' if sent != 1 else ''} "
                             "మీకు పంపాను. Interested sellerని select చేయండి.")
-                return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {sent} buyer{'s' if sent != 1 else ''}కి "
+                return (f"{prefix}Direct match ఇప్పుడే లేదు. కానీ సంబంధిత {sent} buyer notification{'s' if sent != 1 else ''}కి "
                         "మీ offer పంపాను. Response వచ్చిన వెంటనే మీకు చెప్తాను.")
             if failed > 0:
                 return (f"{prefix}సంబంధిత users దొరికారు, కానీ WhatsApp delivery ప్రస్తుతం fail అయింది. "
