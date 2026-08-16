@@ -34,7 +34,7 @@ class LocalDispatchRuntimeService:
         task = self.dispatch.get(task_id)
         if not task or str(task.get("status")) != "OPEN":
             return {"offered": 0, "status": "NOT_OPEN"}
-        partners = self.users.find_delivery_partners()
+        partners = self._find_delivery_partners()
         pickup_lat = task.get("pickup_lat")
         pickup_lon = task.get("pickup_lon")
         ranked = []
@@ -60,15 +60,26 @@ class LocalDispatchRuntimeService:
                 f"Pickup: {task.get('pickup_text') or 'Seller location'}\n"
                 f"Drop: {task.get('drop_text') or 'Buyer address'}"
                 f"{distance_text}{fee_text}\n"
-                "Accept చేయాలంటే DTAKE " + str(task_id)
+                f"Accept చేయాలంటే DTAKE {task_id}"
             )
-            self.whatsapp.send_reply_buttons(
-                mobile,
-                body,
-                [{"id": f"DTAKE {task_id}", "title": "🚚 Accept"}],
-            )
+            self.whatsapp.send_reply_buttons(mobile, body, [{"id": f"DTAKE {task_id}", "title": "🚚 Accept"}])
             offered += 1
         return {"offered": offered, "status": "OFFERED" if offered else "NO_PARTNERS"}
+
+    def _find_delivery_partners(self) -> list[dict]:
+        rows = self.users.database.fetchall(
+            """
+            SELECT u.*
+            FROM users u
+            JOIN user_capabilities c ON c.whatsapp_mobile = u.whatsapp_mobile
+            WHERE u.registration_complete = 1
+              AND c.capability = 'DELIVERY_PARTNER'
+              AND u.latitude IS NOT NULL
+              AND u.longitude IS NOT NULL
+            ORDER BY u.updated_at DESC
+            """
+        )
+        return [dict(row) for row in rows]
 
     def _enable_partner(self, user_id: str) -> str:
         user = self.users.find_by_whatsapp_mobile(str(user_id)) or {}
