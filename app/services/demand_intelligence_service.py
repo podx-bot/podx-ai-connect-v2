@@ -6,13 +6,13 @@ from typing import Any
 
 
 class DemandIntelligenceService:
-    def __init__(self, demand_repository, targeting_service, whatsapp_service, contact_resolver, min_count: int = 2) -> None:
+    def __init__(self, demand_repository, targeting_service, signal_repository, whatsapp_service, contact_resolver, min_count: int = 2) -> None:
         self.demands = demand_repository
         self.targeting = targeting_service
+        self.signals = signal_repository
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
         self.min_count = max(2, int(min_count))
-        self._sent_keys: set[tuple[str, str, str]] = set()
 
     def scan_and_notify(self, limit: int = 500) -> dict[str, Any]:
         rows = [r for r in self.demands.list_active(limit=limit) if str(r.get("side") or "").upper() == "NEED"]
@@ -25,10 +25,10 @@ class DemandIntelligenceService:
                 continue
             grouped[(domain, subject, area)].append(row)
 
-        signals = []
+        emitted = []
         notified = 0
-        for key, requests in grouped.items():
-            if len(requests) < self.min_count or key in self._sent_keys:
+        for (domain, subject_key, area_key), requests in grouped.items():
+            if len(requests) < self.min_count:
                 continue
             newest = max(requests, key=lambda r: int(r.get("id") or 0))
             plan = self.targeting.build_plan(newest, already_contacted_user_ids=[], per_wave_limit=10)
@@ -36,17 +36,28 @@ class DemandIntelligenceService:
             for wave in plan.get("waves") or []:
                 for target in wave.get("targets") or []:
                     user_id = str(target.get("user_id") or "")
-                    if not user_id or user_id in recipients:
-                        continue
-                    contact = self.contact_resolver(user_id) or {}
-                    mobile = str(contact.get("mobile") or user_id)
-                    self.whatsapp.send_text_message(mobile, self._message(newest, count=len(requests)))
-                    recipients.append(user_id)
-                    notified += 1
-            if recipients:
-                self._sent_keys.add(key)
-                signals.append({"domain": key[0], "subject": newest.get("subject"), "location": newest.get("location_text"), "count": len(requests), "recipients": recipients})
-        return {"status": "NOTIFIED" if notified else "NO_NEW_SIGNAL", "signals": signals, "notified": notified}
+                    if user_id and user_id not in recipients:
+                        recipients.append(user_id)
+            if not recipients:
+                continue
+
+            signal_key = f"{domain}|{subject_key}|{area_key}"
+            if not self.signals.claim(signal_key, domain, subject_key, area_key, len(requests)):
+                continue
+
+            for user_id in recipients:
+                contact = self.contact_resolver(user_id) or {}
+                mobile = str(contact.get("mobile") or user_id)
+                self.whatsapp.send_text_message(mobile, self._message(newest, count=len(requests)))
+                notified += 1
+            emitted.append({
+                "domain": domain,
+                "subject": newest.get("subject"),
+                "location": newest.get("location_text"),
+                "count": len(requests),
+                "recipients": recipients,
+            })
+        return {"status": "NOTIFIED" if notified else "NO_NEW_SIGNAL", "signals": emitted, "notified": notified}
 
     @staticmethod
     def _message(request: dict[str, Any], count: int) -> str:
