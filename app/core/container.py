@@ -39,7 +39,7 @@ from app.services.grocery_order_runtime_service import GroceryOrderRuntimeServic
 from app.services.grocery_rfq_runtime_service import GroceryRFQRuntimeService
 from app.services.grocery_rfq_service import GroceryRFQService
 from app.services.intent_router_service import IntentRouterService
-from app.services.job_lifecycle_service import JobLifecycleService
+from app.services.job_consent_lifecycle_service import JobConsentLifecycleService
 from app.services.job_matching_service import JobMatchingService
 from app.services.local_dispatch_runtime_service import LocalDispatchRuntimeService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
@@ -90,7 +90,7 @@ class AppContainer:
             generate_content_attempts=2,
             audio_codec_service=self.audio_codec_service,
         )
-        self.job_matching_service=JobMatchingService(user_repository=self.user_repository,whatsapp_service=self.whatsapp_service); self.job_lifecycle_service=JobLifecycleService(repository=self.job_lifecycle_repository,whatsapp_service=self.whatsapp_service); self.easy_job_command_service=EasyJobCommandService(repository=self.job_lifecycle_repository,lifecycle_service=self.job_lifecycle_service)
+        self.job_matching_service=JobMatchingService(user_repository=self.user_repository,whatsapp_service=self.whatsapp_service); self.job_lifecycle_service=JobConsentLifecycleService(repository=self.job_lifecycle_repository,whatsapp_service=self.whatsapp_service); self.easy_job_command_service=EasyJobCommandService(repository=self.job_lifecycle_repository,lifecycle_service=self.job_lifecycle_service)
 
     def _resolve_universal_contact(self,user_id:str):
         user=self.user_repository.find_by_whatsapp_mobile(str(user_id)) or {}
