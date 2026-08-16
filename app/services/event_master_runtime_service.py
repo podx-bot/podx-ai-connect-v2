@@ -4,13 +4,15 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from app.services.event_intent_extractor import EventIntentExtractor
+
 
 class EventMasterRuntimeService:
     def __init__(self, event_service, user_repository=None, provider_runtime=None, intent_extractor=None) -> None:
         self.events = event_service
         self.users = user_repository
         self.provider_runtime = provider_runtime
-        self.intent_extractor = intent_extractor
+        self.intent_extractor = intent_extractor or EventIntentExtractor()
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
@@ -21,8 +23,6 @@ class EventMasterRuntimeService:
             if isinstance(parsed, str):
                 return parsed
         else:
-            if self.intent_extractor is None:
-                return None
             parsed = self.intent_extractor.extract(clean)
             if parsed is None:
                 return None
