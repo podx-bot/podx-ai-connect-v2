@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
@@ -21,8 +22,8 @@ class EventIntentExtractor:
     )
 
     def __init__(self, api_key: str = "", model: str = "gemini-3.6-flash", client: Any | None = None) -> None:
-        self.api_key = str(api_key or "").strip()
-        self.model = str(model or "").strip() or "gemini-3.6-flash"
+        self.api_key = str(api_key or os.getenv("GEMINI_API_KEY") or "").strip()
+        self.model = str(model or os.getenv("GEMINI_VOICE_MODEL") or "gemini-3.6-flash").strip() or "gemini-3.6-flash"
         self._client = client or (genai.Client(api_key=self.api_key) if self.api_key else None)
 
     @classmethod
@@ -51,7 +52,7 @@ class EventIntentExtractor:
             confidence = 0.0
         if confidence < 0.8:
             return None
-        services = [str(x).strip() for x in (payload.get("services") or []) if str(x).strip()]
+        services = [str(x).strip().upper() for x in (payload.get("services") or []) if str(x).strip()]
         guest_count = self._positive_int(payload.get("guest_count"))
         location = self._clean(payload.get("location_text"))
         event_type = self._clean(payload.get("event_type")) or "Function"
