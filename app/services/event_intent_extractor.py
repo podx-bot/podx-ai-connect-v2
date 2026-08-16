@@ -29,19 +29,41 @@ class EventIntentExtractor:
     @classmethod
     def looks_like_event(cls, message: str) -> bool:
         text = " ".join(str(message or "").casefold().split())
-        if not text:
-            return False
-        return any(word in text for word in cls.EVENT_HINTS) and any(word in text for word in cls.SERVICE_HINTS)
+        return bool(text) and any(word in text for word in cls.EVENT_HINTS) and any(word in text for word in cls.SERVICE_HINTS)
 
     def extract(self, message: str) -> dict[str, Any] | None:
         source = " ".join(str(message or "").strip().split())
-        if not self.looks_like_event(source) or self._client is None:
+        if not self.looks_like_event(source):
             return None
-        prompt = self._prompt(source)
+        return self._extract_prompt(self._prompt(source))
+
+    def extract_followup(self, pending: dict[str, Any], message: str) -> dict[str, Any] | None:
+        """Merge a short follow-up into an already-confirmed event intent.
+
+        Follow-ups deliberately bypass keyword gating because replies such as
+        '500 guests' or 'Vijayawada' are meaningful only with saved context.
+        """
+        source = " ".join(str(message or "").strip().split())
+        if not source or not pending:
+            return None
+        prompt = (
+            "Continue an already-confirmed Event/Function RFQ. Merge the new reply into the saved fields. "
+            "Preserve every saved value unless the reply clearly replaces it. Do not invent facts. "
+            "Return exactly one JSON object using this schema: "
+            "{\"is_event_request\":true,\"event_type\":string|null,\"guest_count\":integer|null,"
+            "\"location_text\":string|null,\"event_date\":string|null,"
+            "\"services\":[\"CATERING|HALL|DECORATION|PHOTOGRAPHY|FLOWERS|SOUND|TRANSPORT\"],"
+            "\"confidence\":number}.\n"
+            f"Saved fields: {json.dumps(pending, ensure_ascii=False)}\nNew reply: {source}"
+        )
+        return self._extract_prompt(prompt)
+
+    def _extract_prompt(self, prompt: str) -> dict[str, Any] | None:
+        if self._client is None:
+            return None
         try:
             interaction = self._client.interactions.create(model=self.model, input=prompt, store=False)
-            raw = str(getattr(interaction, "output_text", "") or "").strip()
-            payload = self._json_object(raw)
+            payload = self._json_object(str(getattr(interaction, "output_text", "") or "").strip())
         except Exception:
             return None
         if not bool(payload.get("is_event_request")):
@@ -55,24 +77,27 @@ class EventIntentExtractor:
         services = [str(x).strip().upper() for x in (payload.get("services") or []) if str(x).strip()]
         guest_count = self._positive_int(payload.get("guest_count"))
         location = self._clean(payload.get("location_text"))
-        event_type = self._clean(payload.get("event_type")) or "Function"
-        event_date = self._clean(payload.get("event_date"))
-        missing = []
-        if guest_count is None:
-            missing.append("guest_count")
-        if not location:
-            missing.append("location")
-        if not services:
-            missing.append("services")
-        return {
-            "event_type": event_type,
+        result = {
+            "event_type": self._clean(payload.get("event_type")) or "Function",
             "guest_count": guest_count,
             "location_text": location,
             "services": services,
-            "event_date": event_date,
-            "missing": missing,
+            "event_date": self._clean(payload.get("event_date")),
             "confidence": confidence,
         }
+        result["missing"] = self._missing(result)
+        return result
+
+    @staticmethod
+    def _missing(payload: dict[str, Any]) -> list[str]:
+        missing = []
+        if not payload.get("guest_count"):
+            missing.append("guest_count")
+        if not payload.get("location_text"):
+            missing.append("location")
+        if not payload.get("services"):
+            missing.append("services")
+        return missing
 
     @staticmethod
     def _prompt(source: str) -> str:
@@ -91,8 +116,7 @@ class EventIntentExtractor:
 
     @staticmethod
     def _json_object(raw: str) -> dict[str, Any]:
-        text = str(raw or "").strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"^```(?:json)?\s*", "", str(raw or "").strip(), flags=re.I)
         text = re.sub(r"\s*```$", "", text)
         try:
             data = json.loads(text)
