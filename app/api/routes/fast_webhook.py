@@ -32,6 +32,41 @@ def _elapsed_ms(started_at: float) -> int:
     return max(0, round((time.perf_counter() - started_at) * 1000))
 
 
+def _safe_text_send(container, recipient_mobile: str, message: str, stage: str) -> dict:
+    """Keep one WhatsApp send failure from aborting the rest of a media reply."""
+    try:
+        return container.whatsapp_service.send_text_message(
+            recipient_mobile=recipient_mobile,
+            message=message,
+        )
+    except Exception as error:
+        visible_log(
+            f"WHATSAPP FAST TEXT SEND ERROR: stage={stage} recipient={recipient_mobile} "
+            f"error={type(error).__name__}: {error}"
+        )
+        return {
+            "success": False,
+            "status": "TEXT_SEND_EXCEPTION",
+            "error": str(error),
+        }
+
+
+def _safe_spoken_reply(container, recipient_mobile: str, reply_text: str) -> dict:
+    """Voice failure must never invalidate an already-created text response."""
+    try:
+        return _send_spoken_reply(container, recipient_mobile, reply_text)
+    except Exception as error:
+        visible_log(
+            f"PODX VOICE REPLY ISOLATED ERROR: sender={recipient_mobile} "
+            f"error={type(error).__name__}: {error}"
+        )
+        return {
+            "success": False,
+            "status": "VOICE_REPLY_EXCEPTION",
+            "error": str(error),
+        }
+
+
 def _process_audio_background(container, incoming) -> None:
     total_started = time.perf_counter()
     request_id = getattr(incoming, "provider_message_id", "unknown")
@@ -63,18 +98,24 @@ def _process_audio_background(container, incoming) -> None:
                 visible_log(f"VOICE LATENCY: id={request_id} stage=conversation ms={_elapsed_ms(stage_started)}")
 
         stage_started = time.perf_counter()
-        send_result = container.whatsapp_service.send_text_message(
+        send_result = _safe_text_send(
+            container,
             recipient_mobile=incoming.sender_mobile,
             message=reply_text,
+            stage="voice_final_text",
         )
         visible_log(
             f"VOICE LATENCY: id={request_id} stage=text_send ms={_elapsed_ms(stage_started)} success={bool(send_result.get('success'))} total_to_text_ms={_elapsed_ms(total_started)}"
         )
+
+        # Text and voice are deliberately failure-isolated. Even if text delivery
+        # raises at the transport layer, a valid transcript can still receive the
+        # spoken reply; likewise TTS failure cannot undo the text response.
         if transcript is not None:
             stage_started = time.perf_counter()
-            _send_spoken_reply(container, incoming.sender_mobile, reply_text)
+            voice_result = _safe_spoken_reply(container, incoming.sender_mobile, reply_text)
             visible_log(
-                f"VOICE LATENCY: id={request_id} stage=tts_send ms={_elapsed_ms(stage_started)} total_ms={_elapsed_ms(total_started)}"
+                f"VOICE LATENCY: id={request_id} stage=tts_send ms={_elapsed_ms(stage_started)} success={bool(voice_result.get('success'))} total_ms={_elapsed_ms(total_started)}"
             )
     except Exception as error:
         visible_log(f"WHATSAPP BACKGROUND AUDIO ERROR: {type(error).__name__}: {error}")
@@ -124,9 +165,11 @@ def _process_image_background(container, incoming) -> None:
                     f"IMAGE LATENCY: id={request_id} stage=ai_match ms={_elapsed_ms(stage_started)}"
                 )
         stage_started = time.perf_counter()
-        send_result = container.whatsapp_service.send_text_message(
+        send_result = _safe_text_send(
+            container,
             recipient_mobile=incoming.sender_mobile,
             message=reply_text,
+            stage="image_final_text",
         )
         visible_log(
             f"IMAGE LATENCY: id={request_id} stage=text_send ms={_elapsed_ms(stage_started)} success={bool(send_result.get('success'))} total_ms={_elapsed_ms(total_started)}"
@@ -171,9 +214,11 @@ def _process_document_background(container, incoming) -> None:
                     )
                 if reply_text is None:
                     reply_text = "📄 ఈ documentలో supported Catering menu లేదా Business product price-list గుర్తించలేకపోయాను."
-        send_result = container.whatsapp_service.send_text_message(
+        send_result = _safe_text_send(
+            container,
             recipient_mobile=incoming.sender_mobile,
             message=reply_text,
+            stage="document_final_text",
         )
         visible_log(
             f"DOCUMENT LATENCY: id={request_id} stage=text_send success={bool(send_result.get('success'))} total_ms={_elapsed_ms(total_started)}"
@@ -199,7 +244,7 @@ def verify_webhook(
 
 @router.post("/webhook")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
-    """Fast-path voice/image/document events; preserve proven legacy path for other events."""
+    """Fast-path media events while preserving the legacy handler for other events."""
     container = request.app.state.container
     try:
         payload = await request.json()
@@ -213,7 +258,8 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
         visible_log(f"WHATSAPP FAST PARSER ERROR: {type(error).__name__}: {error}")
         return await legacy_receive_webhook(request)
 
-    if (not audio_messages and not image_messages and not document_messages) or text_messages or location_messages or statuses:
+    has_fast_media = bool(audio_messages or image_messages or document_messages)
+    if not has_fast_media:
         return await legacy_receive_webhook(request)
 
     accepted_audio = 0
@@ -229,7 +275,15 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"AUDIO:{incoming.media_id}",
             )
-            container.whatsapp_service.send_text_message(incoming.sender_mobile, VOICE_ACK_TEXT)
+            # ACK is best effort only. Once the inbound message is persisted the
+            # actual processing must still run even if Meta temporarily rejects
+            # the acknowledgement send.
+            _safe_text_send(
+                container,
+                recipient_mobile=incoming.sender_mobile,
+                message=VOICE_ACK_TEXT,
+                stage="voice_ack",
+            )
             background_tasks.add_task(_process_audio_background, container, incoming)
             accepted_audio += 1
         except Exception as error:
@@ -244,7 +298,12 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"IMAGE:{incoming.media_id}",
             )
-            container.whatsapp_service.send_text_message(incoming.sender_mobile, IMAGE_ACK_TEXT)
+            _safe_text_send(
+                container,
+                recipient_mobile=incoming.sender_mobile,
+                message=IMAGE_ACK_TEXT,
+                stage="image_ack",
+            )
             background_tasks.add_task(_process_image_background, container, incoming)
             accepted_images += 1
         except Exception as error:
@@ -259,11 +318,31 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"DOCUMENT:{incoming.media_id}",
             )
-            container.whatsapp_service.send_text_message(incoming.sender_mobile, DOCUMENT_ACK_TEXT)
+            _safe_text_send(
+                container,
+                recipient_mobile=incoming.sender_mobile,
+                message=DOCUMENT_ACK_TEXT,
+                stage="document_ack",
+            )
             background_tasks.add_task(_process_document_background, container, incoming)
             accepted_documents += 1
         except Exception as error:
             visible_log(f"WHATSAPP FAST DOCUMENT ACCEPT ERROR: {type(error).__name__}: {error}")
+
+    # Meta may batch a voice/media event together with text, location, or delivery
+    # statuses. Previously that forced the entire payload onto the synchronous
+    # legacy audio path. Media IDs are already persisted above, so the legacy
+    # handler can safely process the non-media events and will skip the duplicate
+    # audio item.
+    legacy_followup = None
+    if text_messages or location_messages or statuses:
+        try:
+            legacy_followup = await legacy_receive_webhook(request)
+        except Exception as error:
+            visible_log(
+                f"WHATSAPP FAST LEGACY FOLLOWUP ERROR: {type(error).__name__}: {error}"
+            )
+            legacy_followup = {"status": "followup_error", "error": str(error)}
 
     return {
         "status": "accepted",
@@ -273,4 +352,7 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
         "background_image_count": accepted_images,
         "incoming_document_count": len(document_messages),
         "background_document_count": accepted_documents,
+        "legacy_followup_status": (
+            legacy_followup.get("status") if isinstance(legacy_followup, dict) else None
+        ),
     }
