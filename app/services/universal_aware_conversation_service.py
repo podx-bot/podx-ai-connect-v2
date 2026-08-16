@@ -6,13 +6,16 @@ from zoneinfo import ZoneInfo
 class UniversalAwareConversationService:
     GREETING_WORDS={"hi","hello","hey","హాయ్","హలో","नमस्ते","हाय"}
     PRODUCT_QUESTION_WORDS=("?","ధర","price","ఎంత","available","availability","stock","size","weight","quantity","delivery","warranty","return","expiry","feature","features","original","color","colour","variant","దొరుకుతుందా","ఉందా","ఎలా","ఏమిటి","doubt","details")
-    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None,catering_menu_ai=None,event_runtime=None,event_provider_runtime=None,hybrid_support=None,ride_runtime=None,ledger_runtime=None)->None:
-        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime; self.catering_menu_ai=catering_menu_ai; self.event_runtime=event_runtime; self.event_provider_runtime=event_provider_runtime; self.hybrid_support=hybrid_support or getattr(product_runtime,"hybrid_support",None); self.ride_runtime=ride_runtime; self.ledger_runtime=ledger_runtime or self._auto_ledger_runtime()
+    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None,catering_menu_ai=None,event_runtime=None,event_provider_runtime=None,hybrid_support=None,ride_runtime=None,ledger_runtime=None,creator_runtime=None)->None:
+        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime; self.catering_menu_ai=catering_menu_ai; self.event_runtime=event_runtime; self.event_provider_runtime=event_provider_runtime; self.hybrid_support=hybrid_support or getattr(product_runtime,"hybrid_support",None); self.ride_runtime=ride_runtime; self.ledger_runtime=ledger_runtime or self._auto_ledger_runtime(); self.creator_runtime=creator_runtime or self._auto_creator_runtime()
     def process(self,sender_mobile:str,message:str)->str:
         clean=str(message or "").strip(); normalized=clean.casefold()
         if self.hybrid_support is not None and normalized.startswith(("admin answer ","support answer ")):
             admin_reply=self.hybrid_support.process(sender_mobile,clean)
             if admin_reply is not None:return admin_reply
+        if self.creator_runtime is not None:
+            creator_reply=self.creator_runtime.process(sender_mobile,clean)
+            if creator_reply is not None:return creator_reply
         if self.ledger_runtime is not None:
             ledger_reply=self.ledger_runtime.process(sender_mobile,clean)
             if ledger_reply is not None:return ledger_reply
@@ -60,6 +63,18 @@ class UniversalAwareConversationService:
             support=self.hybrid_support.process(sender_mobile,clean)
             if support is not None:return support
         return self.base_conversation.process(sender_mobile=sender_mobile,message=clean)
+    def _auto_creator_runtime(self):
+        try:
+            catalog=getattr(self.product_runtime,"catalog",None)
+            price_list=getattr(self.product_runtime,"price_list_ai",None)
+            users=getattr(price_list,"users",None)
+            db_path=str(getattr(catalog,"db_path","") or "")
+            if catalog is None or not db_path:return None
+            from app.repositories.creator_commerce_repository import CreatorCommerceRepository
+            from app.services.creator_commerce_runtime_service import CreatorCommerceRuntimeService
+            return CreatorCommerceRuntimeService(CreatorCommerceRepository(db_path),catalog,user_repository=users)
+        except Exception:
+            return None
     def _auto_ledger_runtime(self):
         try:
             users=getattr(self.base_conversation,"user_repository",None)
