@@ -6,9 +6,10 @@ from typing import Optional
 
 
 class EventMasterRuntimeService:
-    def __init__(self, event_service, user_repository=None) -> None:
+    def __init__(self, event_service, user_repository=None, provider_runtime=None) -> None:
         self.events = event_service
         self.users = user_repository
+        self.provider_runtime = provider_runtime
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
@@ -42,9 +43,19 @@ class EventMasterRuntimeService:
         )
         if result.get("status") != "CREATED":
             return "Services గుర్తించలేకపోయాను. Catering, Hall, Decoration, Photography, Flowers, Sound, Transportలో కావాల్సినవి చెప్పండి."
+
+        routing = {"offered": 0, "by_service": {}}
+        if self.provider_runtime is not None:
+            routing = self.provider_runtime.route_children(result)
+
         children = result["children"]
-        lines = [f"✅ Event Master RFQ #{result['master_rfq_id']} create అయింది.",
-                 f"{event_type} • {guests} guests • {location}", "Sub-RFQs:"]
-        lines.extend(f"• {row['service']}: #{row['rfq_id']}" for row in children)
+        lines = [
+            f"✅ Event Master RFQ #{result['master_rfq_id']} create అయింది.",
+            f"{event_type} • {guests} guests • {location}",
+            "Sub-RFQs:",
+        ]
+        for row in children:
+            count = int((routing.get("by_service") or {}).get(row["service"], 0))
+            lines.append(f"• {row['service']}: #{row['rfq_id']} — {count} provider(s) notified")
         lines.append("ప్రతి serviceకి quotation independently compare/select చేయవచ్చు.")
         return "\n".join(lines)
