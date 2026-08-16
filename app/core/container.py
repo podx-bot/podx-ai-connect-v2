@@ -29,6 +29,7 @@ from app.services.grocery_rfq_service import GroceryRFQService
 from app.services.intent_router_service import IntentRouterService
 from app.services.job_lifecycle_service import JobLifecycleService
 from app.services.job_matching_service import JobMatchingService
+from app.services.local_dispatch_runtime_service import LocalDispatchRuntimeService
 from app.services.marketplace_conversation_service import MarketplaceConversationService
 from app.services.product_ai_desk_service import ProductAIDeskService
 from app.services.product_buyer_runtime_service import ProductBuyerRuntimeService
@@ -99,9 +100,12 @@ class AppContainer:
         self.grocery_rfq_service = GroceryRFQService(self.grocery_rfq_repository)
         self.grocery_rfq_runtime_service = GroceryRFQRuntimeService(self.grocery_rfq_repository, self.grocery_rfq_service,
             self.whatsapp_service, self._resolve_universal_contact, user_repository=self.user_repository)
+        self.local_dispatch_runtime_service = LocalDispatchRuntimeService(
+            self.local_dispatch_repository, self.user_repository, self.whatsapp_service, self._resolve_universal_contact)
         self.grocery_order_runtime_service = GroceryOrderRuntimeService(
             self.grocery_rfq_repository, self.grocery_order_repository, self.local_dispatch_repository,
-            self._resolve_universal_contact, user_repository=self.user_repository)
+            self._resolve_universal_contact, user_repository=self.user_repository,
+            dispatch_runtime=self.local_dispatch_runtime_service)
         self.conversation_service = UniversalAwareConversationService(response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service, image_service=self.universal_image_service, base_conversation=self.base_conversation_service,
             product_runtime=self.product_buyer_runtime_service, seller_escalation=self.seller_ai_escalation_service,
