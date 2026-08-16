@@ -6,10 +6,13 @@ from zoneinfo import ZoneInfo
 class UniversalAwareConversationService:
     GREETING_WORDS={"hi","hello","hey","హాయ్","హలో","नमस्ते","हाय"}
     PRODUCT_QUESTION_WORDS=("?","ధర","price","ఎంత","available","availability","stock","size","weight","quantity","delivery","warranty","return","expiry","feature","features","original","color","colour","variant","దొరుకుతుందా","ఉందా","ఎలా","ఏమిటి","doubt","details")
-    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None,catering_menu_ai=None,event_runtime=None,event_provider_runtime=None,hybrid_support=None,ride_runtime=None,ledger_runtime=None,creator_runtime=None)->None:
-        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime; self.catering_menu_ai=catering_menu_ai; self.event_runtime=event_runtime; self.event_provider_runtime=event_provider_runtime; self.hybrid_support=hybrid_support or getattr(product_runtime,"hybrid_support",None); self.ride_runtime=ride_runtime; self.ledger_runtime=ledger_runtime or self._auto_ledger_runtime(); self.creator_runtime=creator_runtime or self._auto_creator_runtime()
+    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None,catering_menu_ai=None,event_runtime=None,event_provider_runtime=None,hybrid_support=None,ride_runtime=None,ledger_runtime=None,creator_runtime=None,alert_preference_runtime=None)->None:
+        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime; self.catering_menu_ai=catering_menu_ai; self.event_runtime=event_runtime; self.event_provider_runtime=event_provider_runtime; self.hybrid_support=hybrid_support or getattr(product_runtime,"hybrid_support",None); self.ride_runtime=ride_runtime; self.ledger_runtime=ledger_runtime or self._auto_ledger_runtime(); self.creator_runtime=creator_runtime or self._auto_creator_runtime(); self.alert_preference_runtime=alert_preference_runtime or self._auto_alert_preference_runtime()
     def process(self,sender_mobile:str,message:str)->str:
         clean=str(message or "").strip(); normalized=clean.casefold()
+        if self.alert_preference_runtime is not None:
+            alert_reply=self.alert_preference_runtime.process(sender_mobile,clean)
+            if alert_reply is not None:return alert_reply
         if self.hybrid_support is not None and normalized.startswith(("admin answer ","support answer ")):
             admin_reply=self.hybrid_support.process(sender_mobile,clean)
             if admin_reply is not None:return admin_reply
@@ -63,31 +66,39 @@ class UniversalAwareConversationService:
             support=self.hybrid_support.process(sender_mobile,clean)
             if support is not None:return support
         return self.base_conversation.process(sender_mobile=sender_mobile,message=clean)
+    def _database_path(self)->str:
+        try:
+            users=getattr(self.base_conversation,"user_repository",None); database=getattr(users,"database",None)
+            if database is None:return ""
+            row=database.fetchone("PRAGMA database_list")
+            return str(row["file"] or "") if row else ""
+        except Exception:return ""
+    def _auto_alert_preference_runtime(self):
+        try:
+            db_path=self._database_path()
+            if not db_path:return None
+            from app.repositories.proactive_alert_preference_repository import ProactiveAlertPreferenceRepository
+            from app.services.proactive_alert_preference_service import ProactiveAlertPreferenceService
+            return ProactiveAlertPreferenceService(ProactiveAlertPreferenceRepository(db_path))
+        except Exception:return None
     def _auto_creator_runtime(self):
         try:
-            catalog=getattr(self.product_runtime,"catalog",None)
-            price_list=getattr(self.product_runtime,"price_list_ai",None)
-            users=getattr(price_list,"users",None)
-            db_path=str(getattr(catalog,"db_path","") or "")
+            catalog=getattr(self.product_runtime,"catalog",None); price_list=getattr(self.product_runtime,"price_list_ai",None); users=getattr(price_list,"users",None); db_path=str(getattr(catalog,"db_path","") or "")
             if catalog is None or not db_path:return None
             from app.repositories.creator_commerce_repository import CreatorCommerceRepository
             from app.services.creator_commerce_runtime_service import CreatorCommerceRuntimeService
             return CreatorCommerceRuntimeService(CreatorCommerceRepository(db_path),catalog,user_repository=users)
-        except Exception:
-            return None
+        except Exception:return None
     def _auto_ledger_runtime(self):
         try:
-            users=getattr(self.base_conversation,"user_repository",None)
-            database=getattr(users,"database",None)
+            users=getattr(self.base_conversation,"user_repository",None); database=getattr(users,"database",None)
             if database is None:return None
-            row=database.fetchone("PRAGMA database_list")
-            db_path=str(row["file"] or "") if row else ""
+            row=database.fetchone("PRAGMA database_list"); db_path=str(row["file"] or "") if row else ""
             if not db_path:return None
             from app.repositories.business_ledger_repository import BusinessLedgerRepository
             from app.services.business_ledger_runtime_service import BusinessLedgerRuntimeService
             return BusinessLedgerRuntimeService(BusinessLedgerRepository(db_path),user_repository=users)
-        except Exception:
-            return None
+        except Exception:return None
     def _matched_product_faq(self,sender_mobile:str,message:str)->str|None:
         lowered=message.casefold(); repo=getattr(self.response_commands,"notification_repository",None); demands=getattr(self.response_commands,"demands",None)
         if not any(word in lowered for word in self.PRODUCT_QUESTION_WORDS) or repo is None or demands is None or not hasattr(repo,"latest_interest_for_buyer"):return None
