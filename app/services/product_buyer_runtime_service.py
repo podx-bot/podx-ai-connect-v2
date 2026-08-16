@@ -1,6 +1,10 @@
 """Runtime bridge: matched product -> Product AI Desk -> RAG -> Buyer Intelligence -> Decision Engine."""
 from __future__ import annotations
+import os
 from typing import Any, Dict
+
+from app.repositories.product_pricelist_pending_repository import ProductPriceListPendingRepository
+from app.services.product_pricelist_ai_service import ProductPriceListAIService
 
 
 class ProductBuyerRuntimeService:
@@ -16,7 +20,8 @@ class ProductBuyerRuntimeService:
     )
 
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
-                 buyer_intelligence, decision_service, seller_escalation=None) -> None:
+                 buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
+                 price_list_ai=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -25,6 +30,12 @@ class ProductBuyerRuntimeService:
         self.buyer_intelligence = buyer_intelligence
         self.decision_service = decision_service
         self.seller_escalation = seller_escalation
+        self.price_list_ai = price_list_ai or ProductPriceListAIService(
+            api_key=str(os.getenv("GEMINI_API_KEY") or ""),
+            catalog_repository=catalog_repository,
+            pending_repository=ProductPriceListPendingRepository(getattr(catalog_repository, "db_path", "podx.db")),
+            user_repository=user_repository,
+        )
 
     def evaluate(self, sender_mobile: str, message: str) -> Dict[str, Any] | None:
         if not hasattr(self.notifications, "latest_interest_for_buyer"):
@@ -56,6 +67,9 @@ class ProductBuyerRuntimeService:
                 "rag": rag_context, "buyer_guide": buyer_guide, "decision": decision}
 
     def process(self, sender_mobile: str, message: str) -> str | None:
+        price_list_reply = self.price_list_ai.process_text(sender_mobile, message) if self.price_list_ai is not None else None
+        if price_list_reply is not None:
+            return price_list_reply
         if not self._looks_like_product_question(message):
             return None
         packet = self.evaluate(sender_mobile, message)
