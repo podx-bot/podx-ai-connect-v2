@@ -1,8 +1,9 @@
 """Universal Party A ↔ Party B matching for PODX.
 
 The matcher is intentionally category-light. It ranks compatible active records
-using relationship compatibility, free-form subject similarity, distance, time,
-quantity and price. Unknown future subjects can still match without adding code.
+using relationship compatibility, free-form subject similarity, optional visual
+similarity, distance, time, quantity and price. Unknown future subjects can still
+match without adding code.
 """
 
 from __future__ import annotations
@@ -59,16 +60,19 @@ class UniversalMatcher:
         time_score = self._time_score(a.get("when_text") or a.get("when"), b.get("when_text") or b.get("when"))
         quantity = self._quantity_score(a, b)
         price = self._price_score(a, b)
-        score = (
+        base_score = (
             subject * 0.46
             + distance * 0.24
             + time_score * 0.12
             + quantity * 0.09
             + price * 0.09
         )
+        visual = self._visual_similarity(a, b)
+        score = base_score if visual is None else (base_score * 0.92 + visual * 0.08)
         return {
             "score": round(score, 4),
             "subject_score": round(subject, 4),
+            "visual_score": round(visual, 4) if visual is not None else None,
             "distance_score": round(distance, 4),
             "distance_km": round(distance_km, 2) if distance_km is not None else None,
             "time_score": round(time_score, 4),
@@ -102,6 +106,33 @@ class UniversalMatcher:
         sequence = SequenceMatcher(None, a, b).ratio()
         containment = 1.0 if a in b or b in a else 0.0
         return max(jaccard, sequence * 0.85, containment * 0.92)
+
+    @classmethod
+    def _visual_similarity(cls, a: Dict[str, Any], b: Dict[str, Any]) -> float | None:
+        left = cls._visual_signature(a)
+        right = cls._visual_signature(b)
+        if not left or not right or len(left) != len(right):
+            return None
+        try:
+            xor = int(left, 16) ^ int(right, 16)
+        except ValueError:
+            return None
+        total_bits = len(left) * 4
+        distance = xor.bit_count()
+        return max(0.0, min(1.0, 1.0 - (distance / max(total_bits, 1))))
+
+    @staticmethod
+    def _visual_signature(record: Dict[str, Any]) -> str | None:
+        constraints = record.get("constraints")
+        if isinstance(constraints, dict):
+            direct = constraints.get("visual_signature")
+            return str(direct).strip().lower() if direct else None
+        if isinstance(constraints, list):
+            for item in constraints:
+                text = str(item or "").strip()
+                if text.casefold().startswith("visual_signature:"):
+                    return text.split(":", 1)[1].strip().lower() or None
+        return None
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
