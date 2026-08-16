@@ -1,6 +1,7 @@
 """Aggregate repeated local NEED records into seller/provider opportunity signals."""
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from typing import Any
 
@@ -13,6 +14,24 @@ class DemandIntelligenceService:
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
         self.min_count = max(2, int(min_count))
+        self._scan_lock = threading.Lock()
+
+    def trigger_async(self) -> bool:
+        if self._scan_lock.locked():
+            return False
+        thread = threading.Thread(target=self._safe_scan, daemon=True, name="podx-demand-intelligence")
+        thread.start()
+        return True
+
+    def _safe_scan(self) -> None:
+        if not self._scan_lock.acquire(blocking=False):
+            return
+        try:
+            self.scan_and_notify()
+        except Exception:
+            return
+        finally:
+            self._scan_lock.release()
 
     def scan_and_notify(self, limit: int = 500) -> dict[str, Any]:
         rows = [r for r in self.demands.list_active(limit=limit) if str(r.get("side") or "").upper() == "NEED"]
