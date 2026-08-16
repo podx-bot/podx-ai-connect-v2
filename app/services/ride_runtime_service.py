@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 import re
 
+from app.services.ride_natural_intake_service import RideNaturalIntakeService
+
 class RideRuntimeService:
     def __init__(self, repository, whatsapp_service, user_repository=None, admin_mobile: str | None = None, natural_intake=None) -> None:
-        self.rides=repository; self.whatsapp=whatsapp_service; self.users=user_repository; self.natural_intake=natural_intake
+        self.rides=repository; self.whatsapp=whatsapp_service; self.users=user_repository
+        self.natural_intake=natural_intake or RideNaturalIntakeService(getattr(repository,'db_path','podx.db'))
         self.admin_mobile=str(admin_mobile or os.getenv('PODX_ADMIN_MOBILE') or '').strip()
 
     def process(self,sender_user_id:str,message:str)->str|None:
