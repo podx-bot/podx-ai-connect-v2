@@ -5,6 +5,9 @@ from app.api.routes.debug import router as debug_router
 from app.api.routes.fast_webhook import router as webhook_router
 from app.api.routes.health import router as health_router
 from app.core.container import AppContainer
+from app.repositories.podx_meet_repository import PodxMeetRepository
+from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
+from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
 
 
 def create_app() -> FastAPI:
@@ -14,6 +17,14 @@ def create_app() -> FastAPI:
     )
 
     container = AppContainer()
+    meet_repository = PodxMeetRepository(container.settings.database_path)
+    meet_runtime = PodxMeetRuntimeService(meet_repository, user_repository=container.user_repository)
+    container.podx_meet_repository = meet_repository
+    container.podx_meet_runtime_service = meet_runtime
+    container.conversation_service = PodxMeetAwareConversationService(
+        meet_runtime=meet_runtime,
+        delegate=container.conversation_service,
+    )
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
 
