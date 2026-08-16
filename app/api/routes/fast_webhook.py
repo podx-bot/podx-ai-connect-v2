@@ -105,6 +105,14 @@ def _process_image_background(container, incoming) -> None:
                     caption=incoming.caption,
                 )
                 if reply_text is None:
+                    reply_text = container.product_buyer_runtime_service.price_list_ai.process_media(
+                        sender_mobile=incoming.sender_mobile,
+                        content=content,
+                        mime_type=media_result.get("mime_type") or incoming.mime_type or "image/jpeg",
+                        media_ref=incoming.media_id,
+                        caption=incoming.caption,
+                    )
+                if reply_text is None:
                     reply_text = container.universal_image_service.process_image(
                         sender_mobile=incoming.sender_mobile,
                         image_bytes=content,
@@ -153,7 +161,16 @@ def _process_document_background(container, incoming) -> None:
                     filename=incoming.filename,
                 )
                 if reply_text is None:
-                    reply_text = "📄 ప్రస్తుతం document AI intake Catering menu/price-list కోసం readyగా ఉంది. Caterer profile ON చేసి లేదా captionలో CMENU అని పంపండి."
+                    reply_text = container.product_buyer_runtime_service.price_list_ai.process_media(
+                        sender_mobile=incoming.sender_mobile,
+                        content=content,
+                        mime_type=mime_type,
+                        media_ref=incoming.media_id,
+                        caption=incoming.caption,
+                        filename=incoming.filename,
+                    )
+                if reply_text is None:
+                    reply_text = "📄 ఈ documentలో supported Catering menu లేదా Business product price-list గుర్తించలేకపోయాను."
         send_result = container.whatsapp_service.send_text_message(
             recipient_mobile=incoming.sender_mobile,
             message=reply_text,
