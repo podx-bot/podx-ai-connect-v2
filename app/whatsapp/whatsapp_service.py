@@ -215,21 +215,21 @@ class WhatsAppService:
         start = time.perf_counter()
         try:
             metadata_start = time.perf_counter()
-            metadata = self._http_client.get(
+            metadata_response = self._http_client.get(
                 f"https://graph.facebook.com/{self.api_version}/{str(media_id).strip()}",
                 headers=self._auth_headers(),
                 timeout=30,
             )
             metadata_ms = round((time.perf_counter() - metadata_start) * 1000)
-            if not 200 <= metadata.status_code < 300:
+            if not 200 <= metadata_response.status_code < 300:
                 return {
                     "success": False,
                     "status": "MEDIA_METADATA_HTTP_ERROR",
-                    "http_status": metadata.status_code,
-                    "provider_response": self._safe_json(metadata),
+                    "http_status": metadata_response.status_code,
+                    "provider_response": self._safe_json(metadata_response),
                     "metadata_ms": metadata_ms,
                 }
-            metadata_body = metadata.json()
+            metadata_body = metadata_response.json()
             url = str(metadata_body.get("url", "")).strip()
             if not url:
                 return {
