@@ -1,15 +1,17 @@
 """Multi-AI image understanding -> structured request -> matching flow."""
-
 from __future__ import annotations
 
 import base64
 import json
 import re
+import time
 from typing import Any, Dict, Optional
 
 import httpx
 from google import genai
 from google.genai import types
+
+from app.services.image_normalization_service import ImageNormalizationService
 
 
 class UniversalImageService:
@@ -34,6 +36,7 @@ class UniversalImageService:
         openai_model: str = "gpt-5",
         min_confidence: float = 0.65,
         http_client: Any | None = None,
+        image_normalizer: ImageNormalizationService | None = None,
     ) -> None:
         self.pending = pending_repository
         self.live = live_capture_service
@@ -42,6 +45,7 @@ class UniversalImageService:
         self.openai_model = str(openai_model or "gpt-5").strip()
         self.min_confidence = max(0.0, min(float(min_confidence or 0.65), 1.0))
         self.http = http_client or httpx.Client(timeout=20.0)
+        self.image_normalizer = image_normalizer or ImageNormalizationService()
 
     def process_image(
         self,
@@ -54,10 +58,31 @@ class UniversalImageService:
         if not image_bytes:
             return "Image data రాలేదు. దయచేసి photo మళ్లీ పంపండి."
 
+        normalized = None
+        normalize_started = time.perf_counter()
+        try:
+            normalized = self.image_normalizer.normalize(image_bytes)
+        finally:
+            print(
+                f"IMAGE LATENCY: id={media_ref or 'unknown'} stage=normalize "
+                f"ms={round((time.perf_counter() - normalize_started) * 1000)} "
+                f"success={bool(normalized)}",
+                flush=True,
+            )
+
+        analysis_bytes = normalized.analysis_bytes if normalized else image_bytes
+        analysis_mime = normalized.analysis_mime_type if normalized else (mime_type or "image/jpeg")
+
+        ai_started = time.perf_counter()
         payload = self._analyze_multi_ai(
-            image_bytes=image_bytes,
-            mime_type=mime_type or "image/jpeg",
+            image_bytes=analysis_bytes,
+            mime_type=analysis_mime,
             caption=caption,
+        )
+        print(
+            f"IMAGE LATENCY: id={media_ref or 'unknown'} stage=multimodal_analysis "
+            f"ms={round((time.perf_counter() - ai_started) * 1000)} success={bool(payload)}",
+            flush=True,
         )
         if payload is None:
             return "Photo అర్థం చేసుకోవడంలో సమస్య వచ్చింది. దయచేసి మళ్లీ పంపండి లేదా చిన్న caption పెట్టండి."
@@ -65,6 +90,21 @@ class UniversalImageService:
         subject = " ".join(str(payload.get("subject") or "").strip().split())
         if not subject:
             return "ఈ photoలో product/service స్పష్టంగా గుర్తించలేకపోయాను. మరో clear photo పంపండి."
+
+        constraints = payload.get("constraints") if isinstance(payload.get("constraints"), list) else []
+        constraints = [str(item).strip() for item in constraints if str(item).strip()]
+        brand = self._text(payload.get("brand"))
+        model = self._text(payload.get("model"))
+        if brand:
+            constraints.append(f"brand:{brand}")
+        if model:
+            constraints.append(f"model:{model}")
+        if normalized and normalized.visual_signature:
+            constraints.append(f"visual_signature:{normalized.visual_signature}")
+            constraints.append(
+                f"analysis_size:{normalized.analysis_width}x{normalized.analysis_height}"
+            )
+            constraints.append(f"preview_bytes:{len(normalized.preview_bytes)}")
 
         side = str(payload.get("side") or "UNKNOWN").upper()
         request = {
@@ -77,11 +117,12 @@ class UniversalImageService:
             "currency": self._text(payload.get("currency")) or ("INR" if payload.get("price") is not None else None),
             "when_text": self._text(payload.get("when_text")),
             "location_text": self._text(payload.get("location_text")),
-            "location_required": True,
-            "constraints": payload.get("constraints") if isinstance(payload.get("constraints"), list) else [],
+            "location_required": not bool(self._text(payload.get("location_text"))),
+            "constraints": constraints,
             "confidence": self._confidence(payload),
         }
 
+        match_started = time.perf_counter()
         if side in {"NEED", "OFFER"}:
             reply = self.live.process_structured(
                 sender_mobile,
@@ -89,9 +130,19 @@ class UniversalImageService:
                 source="image",
                 media_ref=media_ref,
             )
+            print(
+                f"IMAGE LATENCY: id={media_ref or 'unknown'} stage=match_route "
+                f"ms={round((time.perf_counter() - match_started) * 1000)}",
+                flush=True,
+            )
             return reply or f"'{subject}' photo అర్థమైంది. మీ requirementను process చేయలేకపోయాను; textలో ఒకసారి చెప్పండి."
 
         self.pending.save(sender_mobile, media_ref, request)
+        print(
+            f"IMAGE LATENCY: id={media_ref or 'unknown'} stage=clarification_hold "
+            f"ms={round((time.perf_counter() - match_started) * 1000)}",
+            flush=True,
+        )
         return f"📷 Photoలో '{subject}' అని అర్థమైంది. ఇది మీకు కావాలా, లేక మీరు అమ్మాలా/ఇవ్వాలా?"
 
     def _analyze_multi_ai(self, image_bytes: bytes, mime_type: str, caption: str | None) -> Optional[Dict[str, Any]]:
@@ -99,7 +150,6 @@ class UniversalImageService:
         best: Optional[Dict[str, Any]] = None
         best_confidence = -1.0
 
-        # Provider 1: Gemini, with two independent model fallbacks.
         if self.client is not None:
             for model in self.GEMINI_IMAGE_MODELS:
                 try:
@@ -117,7 +167,6 @@ class UniversalImageService:
                         flush=True,
                     )
 
-        # Provider 2: OpenAI vision fallback. It activates automatically when a key is configured.
         if self.openai_api_key:
             try:
                 payload = self._analyze_openai(prompt, image_bytes, mime_type)
@@ -138,7 +187,6 @@ class UniversalImageService:
                     flush=True,
                 )
 
-        # Graceful degradation: return the best valid interpretation even if below threshold.
         if best and str(best.get("subject") or "").strip():
             print(f"PODX IMAGE BRAIN: status=best_effort confidence={best_confidence:.2f}", flush=True)
             return best
@@ -147,10 +195,7 @@ class UniversalImageService:
     def _analyze_gemini(self, model: str, prompt: str, image_bytes: bytes, mime_type: str) -> Dict[str, Any]:
         response = self.client.models.generate_content(
             model=model,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
-                prompt,
-            ],
+            contents=[types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         return self._parse_json(str(getattr(response, "text", "") or ""))
@@ -160,21 +205,16 @@ class UniversalImageService:
         data_url = f"data:{mime_type};base64,{encoded}"
         response = self.http.post(
             "https://api.openai.com/v1/responses",
-            headers={
-                "Authorization": f"Bearer {self.openai_api_key}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {self.openai_api_key}", "Content-Type": "application/json"},
             json={
                 "model": self.openai_model,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": prompt},
-                            {"type": "input_image", "image_url": data_url, "detail": "high"},
-                        ],
-                    }
-                ],
+                "input": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {"type": "input_image", "image_url": data_url, "detail": "high"},
+                    ],
+                }],
             },
         )
         response.raise_for_status()
@@ -194,9 +234,7 @@ class UniversalImageService:
             if not isinstance(item, dict):
                 continue
             for content in item.get("content") or []:
-                if not isinstance(content, dict):
-                    continue
-                if content.get("type") == "output_text" and content.get("text"):
+                if isinstance(content, dict) and content.get("type") == "output_text" and content.get("text"):
                     chunks.append(str(content["text"]))
         return "\n".join(chunks).strip()
 
@@ -234,16 +272,15 @@ class UniversalImageService:
         cap = str(caption or "").strip()
         return (
             "You are the PODX visual commerce brain. Analyze the attached photo or screenshot. "
-            "Return exactly one JSON object and no markdown. Read visible labels, packaging text, brand and product name when possible. "
+            "Return exactly one JSON object and no markdown. Read visible labels, packaging text, brand, model and product name when possible. "
             "Identify the physical product/material/service/work subject. Use the most specific visible product name as subject. "
             "Use caption only to infer intent. If caption clearly means wants/buys/needs, side=NEED. "
             "If caption clearly means sells/has/offers/provides, side=OFFER. Otherwise side=UNKNOWN. "
-            "Never invent price, quantity, brand, model, location or intent. "
-            "Confidence should reflect how certain you are that the subject is correctly identified.\n"
+            "Never invent price, quantity, brand, model, location or intent. Confidence should reflect certainty.\n"
             "Schema: {\"side\":\"NEED|OFFER|UNKNOWN\",\"domain\":\"PRODUCT|SERVICE|WORK|WORKERS|OTHER\","
-            "\"subject\":\"short free-form name\",\"quantity\":number|null,\"unit\":string|null,"
-            "\"price\":number|null,\"currency\":string|null,\"when_text\":string|null,"
-            "\"location_text\":string|null,\"constraints\":[string],\"confidence\":0..1}.\n"
+            "\"subject\":\"short free-form name\",\"brand\":string|null,\"model\":string|null,"
+            "\"quantity\":number|null,\"unit\":string|null,\"price\":number|null,\"currency\":string|null,"
+            "\"when_text\":string|null,\"location_text\":string|null,\"constraints\":[string],\"confidence\":0..1}.\n"
             f"Caption: {cap if cap else '<none>'}"
         )
 
