@@ -46,6 +46,12 @@ class StreetVendorProximityService:
             )
         return None
 
+    def handle_shared_location(self, vendor_mobile: str, latitude: float, longitude: float) -> Optional[str]:
+        profile = self.repository.get(vendor_mobile)
+        if not profile or str(profile.get("status") or "").upper() != "ACTIVE":
+            return None
+        return self.handle_location(vendor_mobile, latitude, longitude)
+
     def handle_location(self, vendor_mobile: str, latitude: float, longitude: float) -> str:
         profile = self.repository.update_location(vendor_mobile, latitude, longitude)
         if not profile:
