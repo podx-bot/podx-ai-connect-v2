@@ -29,6 +29,9 @@ class RideRouteRuntimeService:
             payload = clean[len("ride find "):]
             return self._find(sender_user_id, payload)
 
+        if lowered.startswith("ride "):
+            return self.ride_runtime.process(sender_user_id, clean)
+
         intake = getattr(self.ride_runtime, "natural_intake", None)
         if intake is not None:
             parsed = intake.process(str(sender_user_id), clean)
