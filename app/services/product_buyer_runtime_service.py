@@ -33,14 +33,15 @@ class ProductBuyerRuntimeService:
         self.decision_service = decision_service
         self.seller_escalation = seller_escalation
         db_path = getattr(catalog_repository, "db_path", "podx.db")
+        effective_whatsapp = whatsapp_service or getattr(seller_escalation, "whatsapp", None)
         self.reengagement = reengagement_service
-        if self.reengagement is None and user_repository is not None and whatsapp_service is not None:
+        if self.reengagement is None and user_repository is not None and effective_whatsapp is not None:
             self.reengagement = SmartReengagementService(
                 demand_repository=demand_repository,
                 catalog_repository=catalog_repository,
                 user_repository=user_repository,
                 reengagement_repository=ReengagementRepository(db_path),
-                whatsapp_service=whatsapp_service,
+                whatsapp_service=effective_whatsapp,
             )
         self.price_list_ai = price_list_ai or ProductPriceListAIService(
             api_key=str(os.getenv("GEMINI_API_KEY") or ""),
