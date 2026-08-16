@@ -172,9 +172,22 @@ class AppointmentRepository:
             return False
         if str(request.get("customer_mobile")) != str(customer_mobile):
             return False
-        if str(request.get("status") or "").upper() == "CONFIRMED" and assignment.get("customer_confirmed_at"):
+        request_status = str(request.get("status") or "").upper()
+        assignment_status = str(assignment.get("status") or "").upper()
+        if request_status == "CONFIRMED" and assignment.get("customer_confirmed_at"):
             return True
-        if str(request.get("status") or "").upper() != "PROVIDER_ACCEPTED":
+        # Compatibility for appointments accepted before two-sided confirmation existed.
+        if request_status == "CONFIRMED" and assignment_status == "CONFIRMED":
+            cursor = self.database.execute(
+                """
+                UPDATE appointment_assignments
+                SET customer_confirmed_at=CURRENT_TIMESTAMP
+                WHERE request_id=? AND customer_confirmed_at IS NULL
+                """,
+                (int(request_id),),
+            )
+            return int(getattr(cursor, "rowcount", 0) or 0) > 0
+        if request_status != "PROVIDER_ACCEPTED" or assignment_status != "PROVIDER_ACCEPTED":
             return False
         self.database.execute(
             """
@@ -235,7 +248,8 @@ class AppointmentRepository:
             return False
         if str(request.get("customer_mobile")) != str(customer_mobile):
             return False
-        if str(request.get("status") or "").upper() not in {"PROVIDER_ACCEPTED", "CONFIRMED"}:
+        # Rescheduling is only available after both parties confirmed the original slot.
+        if str(request.get("status") or "").upper() != "CONFIRMED" or not assignment.get("customer_confirmed_at"):
             return False
         self.database.execute(
             """
@@ -263,7 +277,7 @@ class AppointmentRepository:
             return False
         if str(assignment.get("provider_mobile")) != str(provider_mobile):
             return False
-        if str(request.get("status") or "").upper() == "CONFIRMED" and str(assignment.get("status") or "").upper() == "CONFIRMED":
+        if str(request.get("status") or "").upper() == "CONFIRMED" and str(assignment.get("status") or "").upper() == "CONFIRMED" and assignment.get("customer_confirmed_at"):
             return True
         if str(request.get("status") or "").upper() != "RESCHEDULE_REQUESTED":
             return False
@@ -314,11 +328,13 @@ class AppointmentRepository:
             return False
         if str(assignment.get("status") or "").upper() == "COMPLETED":
             return True
+        if not assignment.get("customer_confirmed_at"):
+            return False
         cursor = self.database.execute(
             """
             UPDATE appointment_assignments
             SET status='COMPLETED', completed_at=CURRENT_TIMESTAMP
-            WHERE request_id=? AND provider_mobile=? AND status='CONFIRMED'
+            WHERE request_id=? AND provider_mobile=? AND status='CONFIRMED' AND customer_confirmed_at IS NOT NULL
             """,
             (int(request_id), str(provider_mobile)),
         )
