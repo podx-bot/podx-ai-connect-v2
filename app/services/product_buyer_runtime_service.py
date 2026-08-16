@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from app.repositories.business_customer_desk_repository import BusinessCustomerDeskRepository
 from app.repositories.hybrid_support_repository import HybridSupportRepository
 from app.repositories.product_pricelist_pending_repository import ProductPriceListPendingRepository
 from app.repositories.reengagement_repository import ReengagementRepository
 from app.repositories.street_vendor_repository import StreetVendorRepository
+from app.services.business_customer_desk_service import BusinessCustomerDeskService
 from app.services.hybrid_support_service import HybridSupportService
 from app.services.product_pricelist_ai_service import ProductPriceListAIService
 from app.services.smart_reengagement_service import SmartReengagementService
@@ -28,7 +30,7 @@ class ProductBuyerRuntimeService:
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
                  buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
                  price_list_ai=None, whatsapp_service=None, reengagement_service=None, hybrid_support=None,
-                 street_vendor_runtime=None) -> None:
+                 street_vendor_runtime=None, business_desk_runtime=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -73,6 +75,14 @@ class ProductBuyerRuntimeService:
                 whatsapp_service=effective_whatsapp,
                 radius_km=float(os.getenv("PODX_VENDOR_ALERT_RADIUS_KM") or "1.5"),
             )
+        self.business_desk_runtime = business_desk_runtime
+        if self.business_desk_runtime is None and effective_whatsapp is not None and getattr(rag_service, "repository", None) is not None:
+            self.business_desk_runtime = BusinessCustomerDeskService(
+                repository=BusinessCustomerDeskRepository(db_path),
+                rag_repository=rag_service.repository,
+                whatsapp_service=effective_whatsapp,
+                user_repository=user_repository,
+            )
 
     def evaluate(self, sender_mobile: str, message: str) -> Dict[str, Any] | None:
         if not hasattr(self.notifications, "latest_interest_for_buyer"):
@@ -104,6 +114,10 @@ class ProductBuyerRuntimeService:
                 "rag": rag_context, "buyer_guide": buyer_guide, "decision": decision}
 
     def process(self, sender_mobile: str, message: str) -> str | None:
+        if self.business_desk_runtime is not None:
+            business_reply = self.business_desk_runtime.process_text(sender_mobile, message)
+            if business_reply is not None:
+                return business_reply
         if self.street_vendor_runtime is not None:
             vendor_reply = self.street_vendor_runtime.process_text(sender_mobile, message)
             if vendor_reply is not None:
