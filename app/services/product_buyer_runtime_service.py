@@ -6,9 +6,11 @@ from typing import Any, Dict
 from app.repositories.hybrid_support_repository import HybridSupportRepository
 from app.repositories.product_pricelist_pending_repository import ProductPriceListPendingRepository
 from app.repositories.reengagement_repository import ReengagementRepository
+from app.repositories.street_vendor_repository import StreetVendorRepository
 from app.services.hybrid_support_service import HybridSupportService
 from app.services.product_pricelist_ai_service import ProductPriceListAIService
 from app.services.smart_reengagement_service import SmartReengagementService
+from app.services.street_vendor_proximity_service import StreetVendorProximityService
 
 
 class ProductBuyerRuntimeService:
@@ -25,7 +27,8 @@ class ProductBuyerRuntimeService:
 
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
                  buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
-                 price_list_ai=None, whatsapp_service=None, reengagement_service=None, hybrid_support=None) -> None:
+                 price_list_ai=None, whatsapp_service=None, reengagement_service=None, hybrid_support=None,
+                 street_vendor_runtime=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -61,6 +64,15 @@ class ProductBuyerRuntimeService:
             user_repository=user_repository,
             reengagement_service=self.reengagement,
         )
+        self.street_vendor_runtime = street_vendor_runtime
+        if self.street_vendor_runtime is None and user_repository is not None and effective_whatsapp is not None:
+            self.street_vendor_runtime = StreetVendorProximityService(
+                repository=StreetVendorRepository(db_path),
+                demand_repository=demand_repository,
+                user_repository=user_repository,
+                whatsapp_service=effective_whatsapp,
+                radius_km=float(os.getenv("PODX_VENDOR_ALERT_RADIUS_KM") or "1.5"),
+            )
 
     def evaluate(self, sender_mobile: str, message: str) -> Dict[str, Any] | None:
         if not hasattr(self.notifications, "latest_interest_for_buyer"):
@@ -92,6 +104,10 @@ class ProductBuyerRuntimeService:
                 "rag": rag_context, "buyer_guide": buyer_guide, "decision": decision}
 
     def process(self, sender_mobile: str, message: str) -> str | None:
+        if self.street_vendor_runtime is not None:
+            vendor_reply = self.street_vendor_runtime.process_text(sender_mobile, message)
+            if vendor_reply is not None:
+                return vendor_reply
         price_list_reply = self.price_list_ai.process_text(sender_mobile, message) if self.price_list_ai is not None else None
         if price_list_reply is not None:
             return price_list_reply
