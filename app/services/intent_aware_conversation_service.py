@@ -27,7 +27,10 @@ class IntentAwareConversationService(ConversationService):
         ConversationStep.WORKER_CATEGORY,
         ConversationStep.WORKER_EXPERIENCE,
         ConversationStep.WORKER_AVAILABILITY,
+        ConversationStep.WORKER_LOCATION,
         ConversationStep.EMPLOYER_SERVICE,
+        ConversationStep.EMPLOYER_REQUIREMENT,
+        ConversationStep.EMPLOYER_LOCATION,
     }
 
     APPOINTMENT_INTERRUPT_INTENTS = {
@@ -328,25 +331,24 @@ class IntentAwareConversationService(ConversationService):
         self.user_repository.save_worker_profile(whatsapp_mobile=sender_mobile, category=session.data["category"], experience=session.data["experience"], availability=session.data["availability"])
         session.data.pop("smart_prefill", None)
         session.step = ConversationStep.WORKER_LOCATION
-        return self._reply(sender_mobile, "✅ మీ పని వివరాలు తీసుకున్నాను. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Current Location share చేయండి.")
+        return self._reply(sender_mobile, "✅ మీ పని వివరాలు తీసుకున్నాను. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా మీ Current Location share చేయండి.")
 
     def _continue_smart_employer(self, sender_mobile: str, message: str) -> str | None:
         session = self.session_registry.get(sender_mobile)
+        if session.step != ConversationStep.EMPLOYER_SERVICE:
+            return None
         normalized = message.lower()
-        service = self.CATEGORY_MAP.get(normalized)
+        service = self.SERVICE_MAP.get(normalized)
         if service is None:
             service = self.smart_job_message_service.extract(message).get("category")
         if service is None:
-            return self._reply(sender_mobile, self._employer_service_menu())
+            return None
         session.data["service"] = service
-        pending_requirement = str(session.data.get("pending_requirement") or "").strip()
-        if pending_requirement:
-            self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=service, requirement=pending_requirement)
-            session.data["requirement"] = pending_requirement
-            session.data.pop("pending_requirement", None)
+        requirement = session.data.pop("pending_requirement", None)
+        if requirement:
+            self.user_repository.save_employer_post(whatsapp_mobile=sender_mobile, service=service, requirement=requirement)
+            session.data["requirement"] = requirement
             session.data.pop("smart_prefill", None)
             session.step = ConversationStep.EMPLOYER_LOCATION
             return self._reply(sender_mobile, f"✅ {service} requirement అర్థమైంది. 📍 ఇప్పుడు WhatsApp Attachment ద్వారా Job Location share చేయండి.")
-        session.data.pop("smart_prefill", None)
-        session.step = ConversationStep.EMPLOYER_REQUIREMENT
-        return self._reply(sender_mobile, f"✅ {service} ఎంపిక చేశారు. దయచేసి మీ job requirement వివరాలు చెప్పండి.")
+        return None
