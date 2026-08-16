@@ -64,6 +64,8 @@ class SmartReengagementService:
             if bool(result.get("success")):
                 sent += 1
                 matches.append({"buyer_user_id": buyer_id, "demand_id": int(need["id"]), "distance_km": distance})
+            else:
+                self.ledger.release(buyer_id, int(product["id"]), fingerprint)
 
         return {"status": "NOTIFIED" if sent else "NO_NEW_MATCH", "sent": sent, "matches": matches}
 
