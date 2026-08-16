@@ -118,7 +118,7 @@ class UniversalRFQRepository:
             cur = conn.execute(
                 """INSERT INTO universal_rfqs(
                        requester_user_id,rfq_type,title,location_text,event_date,guest_count,budget,metadata_json,status,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?,'OPEN',?,?)""".replace(",?,'OPEN'", ",?,'OPEN'"),
+                   ) VALUES(?,?,?,?,?,?,?,?,'OPEN',?,?)""",
                 (
                     str(requester_user_id), kind, self._clean(title), self._clean(location_text),
                     self._clean(event_date), int(guest_count) if guest_count is not None else None,
@@ -135,13 +135,12 @@ class UniversalRFQRepository:
         name = self._clean(item.get("item_name") or item.get("name"))
         if not name:
             return
-        category = self._clean(item.get("category"))
         conn.execute(
             """INSERT OR IGNORE INTO universal_rfq_items(
                    rfq_id,item_name,category,quantity,unit,required,metadata_json,created_at
                ) VALUES(?,?,?,?,?,?,?,?)""",
             (
-                int(rfq_id), name, category, item.get("quantity"), self._clean(item.get("unit")),
+                int(rfq_id), name, self._clean(item.get("category")), item.get("quantity"), self._clean(item.get("unit")),
                 1 if item.get("required", True) else 0,
                 json.dumps(item.get("metadata") or {}, ensure_ascii=False), now,
             ),
@@ -216,10 +215,7 @@ class UniversalRFQRepository:
                     float(reliability_score or 0.5), self._clean(notes), now, now,
                 ),
             )
-            row = conn.execute(
-                "SELECT id FROM universal_rfq_quotes WHERE rfq_id=? AND provider_user_id=?",
-                (int(rfq_id), str(provider_user_id)),
-            ).fetchone()
+            row = conn.execute("SELECT id FROM universal_rfq_quotes WHERE rfq_id=? AND provider_user_id=?", (int(rfq_id), str(provider_user_id))).fetchone()
             return int(row["id"])
 
     def set_item_quote(
@@ -260,17 +256,13 @@ class UniversalRFQRepository:
 
     def submitted_quotes(self, rfq_id: int) -> List[Dict[str, Any]]:
         with self._connect() as conn:
-            quotes = conn.execute(
-                "SELECT * FROM universal_rfq_quotes WHERE rfq_id=? AND status='SUBMITTED' ORDER BY id",
-                (int(rfq_id),),
-            ).fetchall()
+            quotes = conn.execute("SELECT * FROM universal_rfq_quotes WHERE rfq_id=? AND status='SUBMITTED' ORDER BY id", (int(rfq_id),)).fetchall()
             result = []
             for quote in quotes:
                 data = dict(quote)
                 rows = conn.execute(
                     """SELECT qi.*,ri.item_name,ri.category,ri.quantity,ri.unit,ri.required
-                       FROM universal_rfq_quote_items qi
-                       JOIN universal_rfq_items ri ON ri.id=qi.rfq_item_id
+                       FROM universal_rfq_quote_items qi JOIN universal_rfq_items ri ON ri.id=qi.rfq_item_id
                        WHERE qi.quote_id=? ORDER BY ri.id""",
                     (int(quote["id"]),),
                 ).fetchall()
