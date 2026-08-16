@@ -8,13 +8,26 @@ from typing import Any, Dict
 
 class SmartReengagementService:
     def __init__(self, demand_repository, catalog_repository, user_repository,
-                 reengagement_repository, whatsapp_service, radius_km: float = 25.0) -> None:
+                 reengagement_repository, whatsapp_service, radius_km: float = 25.0,
+                 alert_preferences=None) -> None:
         self.demands = demand_repository
         self.catalog = catalog_repository
         self.users = user_repository
         self.ledger = reengagement_repository
         self.whatsapp = whatsapp_service
         self.radius_km = max(1.0, float(radius_km))
+        self.alert_preferences = alert_preferences or self._auto_alert_preferences(catalog_repository)
+
+    @staticmethod
+    def _auto_alert_preferences(repository):
+        try:
+            db_path = str(getattr(repository, "db_path", "") or "")
+            if not db_path:
+                return None
+            from app.repositories.proactive_alert_preference_repository import ProactiveAlertPreferenceRepository
+            return ProactiveAlertPreferenceRepository(db_path)
+        except Exception:
+            return None
 
     def notify_product_available(self, seller_user_id: str, product_id: int) -> Dict[str, Any]:
         product = self.catalog.get(int(product_id))
@@ -37,6 +50,8 @@ class SmartReengagementService:
                 continue
             buyer_id = str(need.get("user_id") or "")
             if not buyer_id or buyer_id == str(seller_user_id):
+                continue
+            if self.alert_preferences is not None and not self.alert_preferences.is_enabled(buyer_id):
                 continue
             if self._similarity(need.get("subject"), product.get("subject")) < 0.72:
                 continue

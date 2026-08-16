@@ -7,14 +7,27 @@ from typing import Any
 
 
 class DemandIntelligenceService:
-    def __init__(self, demand_repository, targeting_service, signal_repository, whatsapp_service, contact_resolver, min_count: int = 2) -> None:
+    def __init__(self, demand_repository, targeting_service, signal_repository, whatsapp_service, contact_resolver,
+                 min_count: int = 2, alert_preferences=None) -> None:
         self.demands = demand_repository
         self.targeting = targeting_service
         self.signals = signal_repository
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
         self.min_count = max(2, int(min_count))
+        self.alert_preferences = alert_preferences or self._auto_alert_preferences(demand_repository)
         self._scan_lock = threading.Lock()
+
+    @staticmethod
+    def _auto_alert_preferences(repository):
+        try:
+            db_path = str(getattr(repository, "db_path", "") or "")
+            if not db_path:
+                return None
+            from app.repositories.proactive_alert_preference_repository import ProactiveAlertPreferenceRepository
+            return ProactiveAlertPreferenceRepository(db_path)
+        except Exception:
+            return None
 
     def trigger_async(self) -> bool:
         if self._scan_lock.locked():
@@ -57,6 +70,8 @@ class DemandIntelligenceService:
                     user_id = str(target.get("user_id") or "")
                     if user_id and user_id not in recipients:
                         recipients.append(user_id)
+            if self.alert_preferences is not None:
+                recipients = [user_id for user_id in recipients if self.alert_preferences.is_enabled(user_id)]
             if not recipients:
                 continue
 
@@ -64,17 +79,19 @@ class DemandIntelligenceService:
             if not self.signals.claim(signal_key, domain, subject_key, area_key, len(requests)):
                 continue
 
+            delivered_recipients = []
             for user_id in recipients:
                 contact = self.contact_resolver(user_id) or {}
                 mobile = str(contact.get("mobile") or user_id)
                 self.whatsapp.send_text_message(mobile, self._message(newest, count=len(requests)))
                 notified += 1
+                delivered_recipients.append(user_id)
             emitted.append({
                 "domain": domain,
                 "subject": newest.get("subject"),
                 "location": newest.get("location_text"),
                 "count": len(requests),
-                "recipients": recipients,
+                "recipients": delivered_recipients,
             })
         return {"status": "NOTIFIED" if notified else "NO_NEW_SIGNAL", "signals": emitted, "notified": notified}
 
