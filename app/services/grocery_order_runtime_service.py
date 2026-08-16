@@ -6,15 +6,28 @@ from typing import Optional
 
 
 class GroceryOrderRuntimeService:
-    def __init__(self, rfq_repository, order_repository, dispatch_repository, contact_resolver, user_repository=None) -> None:
+    def __init__(
+        self,
+        rfq_repository,
+        order_repository,
+        dispatch_repository,
+        contact_resolver,
+        user_repository=None,
+        dispatch_runtime=None,
+    ) -> None:
         self.rfqs = rfq_repository
         self.orders = order_repository
         self.dispatch = dispatch_repository
         self.contact_resolver = contact_resolver
         self.users = user_repository
+        self.dispatch_runtime = dispatch_runtime
 
     def process(self, sender_user_id: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").strip().split())
+        if self.dispatch_runtime is not None:
+            dispatch_reply = self.dispatch_runtime.process(sender_user_id, clean)
+            if dispatch_reply is not None:
+                return dispatch_reply
         lowered = clean.casefold()
         if lowered.startswith("gselect"):
             if not self._registered(sender_user_id):
@@ -30,7 +43,8 @@ class GroceryOrderRuntimeService:
         match = re.match(r"^gselect\s+#?(\d+)\s+(\S+)$", message, flags=re.IGNORECASE)
         if not match:
             return "Format: GSELECT <RFQ ID> <SELLER ID>"
-        rfq_id = int(match.group(1)); seller_user_id = str(match.group(2))
+        rfq_id = int(match.group(1))
+        seller_user_id = str(match.group(2))
         rfq = self.rfqs.get_rfq(rfq_id)
         if not rfq or str(rfq.get("buyer_user_id")) != str(buyer_user_id):
             return f"RFQ #{rfq_id} మీ open grocery request కాదు."
@@ -59,7 +73,8 @@ class GroceryOrderRuntimeService:
         match = re.match(r"^gaddress\s+#?(\d+)\s+(.+)$", message, flags=re.IGNORECASE)
         if not match:
             return "Format: GADDRESS <ORDER ID> <FULL DELIVERY ADDRESS>"
-        order_id = int(match.group(1)); address = " ".join(match.group(2).split())
+        order_id = int(match.group(1))
+        address = " ".join(match.group(2).split())
         order = self.orders.get(order_id)
         if not order or str(order.get("buyer_user_id")) != str(buyer_user_id):
             return f"Grocery Order #{order_id} మీ order కాదు."
@@ -67,14 +82,17 @@ class GroceryOrderRuntimeService:
             return f"🚚 Grocery Order #{order_id} delivery task ఇప్పటికే create అయింది: #{order['dispatch_task_id']}."
         if not self.orders.set_delivery_address(order_id, buyer_user_id, address):
             return f"Grocery Order #{order_id} address update చేయలేకపోయాను. Current status: {order.get('status')}."
+
         seller = self.contact_resolver(str(order["seller_user_id"])) or {}
-        pickup_text = str(seller.get("area") or seller.get("address") or f"Seller {order['seller_user_id']}")
+        pickup_text = str(seller.get("location_address") or seller.get("location_name") or seller.get("area") or seller.get("address") or f"Seller {order['seller_user_id']}")
         order_ref = f"GROCERY-{order_id}"
         try:
             task_id = self.dispatch.create_task(
                 order_ref=order_ref,
                 seller_user_id=str(order["seller_user_id"]),
                 buyer_user_id=str(buyer_user_id),
+                pickup_lat=seller.get("latitude"),
+                pickup_lon=seller.get("longitude"),
                 pickup_text=pickup_text,
                 drop_text=address,
                 fee=float(order.get("quoted_delivery_fee") or 0) or None,
@@ -85,9 +103,19 @@ class GroceryOrderRuntimeService:
                 return f"🚚 Delivery task #{refreshed['dispatch_task_id']} ఇప్పటికే readyగా ఉంది."
             raise
         self.orders.attach_dispatch(order_id, task_id)
+
+        offered = 0
+        if self.dispatch_runtime is not None:
+            offer_result = self.dispatch_runtime.offer_task(task_id)
+            offered = int(offer_result.get("offered") or 0)
+        if offered:
+            return (
+                f"🚚 Grocery Order #{order_id} delivery handoff ready. Dispatch Task #{task_id} create అయింది.\n"
+                f"{offered} nearby delivery partner(s)కి offer పంపాను. First accepterకి task assign అవుతుంది."
+            )
         return (
             f"🚚 Grocery Order #{order_id} delivery handoff ready. Dispatch Task #{task_id} create అయింది.\n"
-            "Next: nearby delivery partnersకి task offer చేసి first accepterని assign చేస్తాను."
+            "ప్రస్తుతం nearby delivery partner available కనిపించలేదు; task OPENగా ఉంది."
         )
 
     def _registered(self, user_id: str) -> bool:
