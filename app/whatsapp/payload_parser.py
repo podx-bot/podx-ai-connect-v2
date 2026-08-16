@@ -1,6 +1,13 @@
 from typing import Any
 
-from app.models.whatsapp import DeliveryStatus, IncomingAudioMessage, IncomingImageMessage, IncomingLocationMessage, IncomingTextMessage
+from app.models.whatsapp import (
+    DeliveryStatus,
+    IncomingAudioMessage,
+    IncomingDocumentMessage,
+    IncomingImageMessage,
+    IncomingLocationMessage,
+    IncomingTextMessage,
+)
 
 
 def _message_values(payload: dict[str, Any]):
@@ -21,58 +28,116 @@ def extract_text_messages(payload: dict[str, Any]) -> list[IncomingTextMessage]:
         elif message_type == "interactive":
             interactive = message.get("interactive", {}) or {}
             if interactive.get("type") == "button_reply":
-                # Internal button ID deliberately maps to the existing command router.
                 text = str((interactive.get("button_reply") or {}).get("id", "")).strip()
             elif interactive.get("type") == "list_reply":
                 text = str((interactive.get("list_reply") or {}).get("id", "")).strip()
         elif message_type == "button":
-            # Compatibility with older/template button webhook shape.
             text = str((message.get("button") or {}).get("payload", "")).strip()
         else:
             continue
-        sender = str(message.get("from", "")).strip(); provider_id = str(message.get("id", "")).strip()
+        sender = str(message.get("from", "")).strip()
+        provider_id = str(message.get("id", "")).strip()
         if sender and provider_id and text:
             results.append(IncomingTextMessage(provider_id, sender, text))
     return results
 
 
 def extract_audio_messages(payload: dict[str, Any]) -> list[IncomingAudioMessage]:
-    results=[]
+    results = []
     for message in _message_values(payload):
-        if message.get("type") != "audio": continue
-        sender=str(message.get("from","")).strip(); provider_id=str(message.get("id","")).strip(); audio=message.get("audio",{}) or {}; media_id=str(audio.get("id","")).strip(); mime=audio.get("mime_type")
-        if sender and provider_id and media_id: results.append(IncomingAudioMessage(provider_id,sender,media_id,str(mime).strip() if mime else None,bool(audio.get("voice",False))))
+        if message.get("type") != "audio":
+            continue
+        sender = str(message.get("from", "")).strip()
+        provider_id = str(message.get("id", "")).strip()
+        audio = message.get("audio", {}) or {}
+        media_id = str(audio.get("id", "")).strip()
+        mime = audio.get("mime_type")
+        if sender and provider_id and media_id:
+            results.append(IncomingAudioMessage(provider_id, sender, media_id, str(mime).strip() if mime else None, bool(audio.get("voice", False))))
     return results
 
 
 def extract_image_messages(payload: dict[str, Any]) -> list[IncomingImageMessage]:
-    results=[]
+    results = []
     for message in _message_values(payload):
-        if message.get("type") != "image": continue
-        sender=str(message.get("from","")).strip(); provider_id=str(message.get("id","")).strip(); image=message.get("image",{}) or {}; media_id=str(image.get("id","")).strip(); mime=image.get("mime_type"); caption=image.get("caption")
-        if sender and provider_id and media_id: results.append(IncomingImageMessage(provider_message_id=provider_id,sender_mobile=sender,media_id=media_id,mime_type=str(mime).strip() if mime else None,caption=str(caption).strip() if caption else None))
+        if message.get("type") != "image":
+            continue
+        sender = str(message.get("from", "")).strip()
+        provider_id = str(message.get("id", "")).strip()
+        image = message.get("image", {}) or {}
+        media_id = str(image.get("id", "")).strip()
+        mime = image.get("mime_type")
+        caption = image.get("caption")
+        if sender and provider_id and media_id:
+            results.append(
+                IncomingImageMessage(
+                    provider_message_id=provider_id,
+                    sender_mobile=sender,
+                    media_id=media_id,
+                    mime_type=str(mime).strip() if mime else None,
+                    caption=str(caption).strip() if caption else None,
+                )
+            )
+    return results
+
+
+def extract_document_messages(payload: dict[str, Any]) -> list[IncomingDocumentMessage]:
+    results = []
+    for message in _message_values(payload):
+        if message.get("type") != "document":
+            continue
+        sender = str(message.get("from", "")).strip()
+        provider_id = str(message.get("id", "")).strip()
+        document = message.get("document", {}) or {}
+        media_id = str(document.get("id", "")).strip()
+        mime = document.get("mime_type")
+        caption = document.get("caption")
+        filename = document.get("filename")
+        if sender and provider_id and media_id:
+            results.append(
+                IncomingDocumentMessage(
+                    provider_message_id=provider_id,
+                    sender_mobile=sender,
+                    media_id=media_id,
+                    mime_type=str(mime).strip() if mime else None,
+                    caption=str(caption).strip() if caption else None,
+                    filename=str(filename).strip() if filename else None,
+                )
+            )
     return results
 
 
 def extract_location_messages(payload: dict[str, Any]) -> list[IncomingLocationMessage]:
-    results=[]
+    results = []
     for message in _message_values(payload):
-        if message.get("type") != "location": continue
-        sender=str(message.get("from","")).strip(); provider_id=str(message.get("id","")).strip(); location=message.get("location",{}) or {}; lat=location.get("latitude"); lon=location.get("longitude")
-        if not sender or not provider_id or lat is None or lon is None: continue
-        try: lat=float(lat); lon=float(lon)
-        except (TypeError,ValueError): continue
-        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180): continue
-        name=location.get("name"); address=location.get("address")
-        results.append(IncomingLocationMessage(provider_id,sender,lat,lon,str(name).strip() if name is not None else None,str(address).strip() if address is not None else None))
+        if message.get("type") != "location":
+            continue
+        sender = str(message.get("from", "")).strip()
+        provider_id = str(message.get("id", "")).strip()
+        location = message.get("location", {}) or {}
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if not sender or not provider_id or lat is None or lon is None:
+            continue
+        try:
+            lat = float(lat)
+            lon = float(lon)
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            continue
+        name = location.get("name")
+        address = location.get("address")
+        results.append(IncomingLocationMessage(provider_id, sender, lat, lon, str(name).strip() if name is not None else None, str(address).strip() if address is not None else None))
     return results
 
 
 def extract_delivery_statuses(payload: dict[str, Any]) -> list[DeliveryStatus]:
-    results=[]
-    for entry in payload.get("entry",[]):
-        for change in entry.get("changes",[]):
-            for status in change.get("value",{}).get("statuses",[]):
-                errors=status.get("errors",[]); error_message=str(errors[0]) if errors else None
-                results.append(DeliveryStatus(str(status.get("id","")).strip(),str(status.get("recipient_id")).strip() if status.get("recipient_id") else None,str(status.get("status","unknown")).strip(),error_message))
+    results = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            for status in change.get("value", {}).get("statuses", []):
+                errors = status.get("errors", [])
+                error_message = str(errors[0]) if errors else None
+                results.append(DeliveryStatus(str(status.get("id", "")).strip(), str(status.get("recipient_id")).strip() if status.get("recipient_id") else None, str(status.get("status", "unknown")).strip(), error_message))
     return results

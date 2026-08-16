@@ -28,6 +28,16 @@ class IncomingImageMessage:
 
 
 @dataclass(frozen=True)
+class IncomingDocumentMessage:
+    provider_message_id: str
+    sender_mobile: str
+    media_id: str
+    mime_type: Optional[str]
+    caption: Optional[str]
+    filename: Optional[str]
+
+
+@dataclass(frozen=True)
 class IncomingLocationMessage:
     provider_message_id: str
     sender_mobile: str
