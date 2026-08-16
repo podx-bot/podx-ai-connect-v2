@@ -45,7 +45,6 @@ class WhatsAppService:
     def _send_with_retry(self, payload):
         if not self.is_configured():
             return {"success": False, "status": "NOT_CONFIGURED", "attempts": 0}
-
         headers = {**self._auth_headers(), "Content-Type": "application/json"}
         last = {}
         for attempt in range(1, self.max_attempts + 1):
@@ -62,15 +61,13 @@ class WhatsAppService:
         return "".join(char for char in str(mobile) if char.isdigit())
 
     def send_text_message(self, recipient_mobile, message):
-        return self._send_with_retry(
-            {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": self._mobile(recipient_mobile),
-                "type": "text",
-                "text": {"preview_url": False, "body": str(message).strip()},
-            }
-        )
+        return self._send_with_retry({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self._mobile(recipient_mobile),
+            "type": "text",
+            "text": {"preview_url": False, "body": str(message).strip()},
+        })
 
     def _send_media_by_id(self, recipient_mobile, kind, media_id, caption=""):
         media_id = str(media_id or "").strip()
@@ -80,15 +77,13 @@ class WhatsAppService:
         clean_caption = str(caption or "").strip()
         if clean_caption:
             obj["caption"] = clean_caption[:1024]
-        return self._send_with_retry(
-            {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": self._mobile(recipient_mobile),
-                "type": kind,
-                kind: obj,
-            }
-        )
+        return self._send_with_retry({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self._mobile(recipient_mobile),
+            "type": kind,
+            kind: obj,
+        })
 
     def send_image_by_id(self, recipient_mobile, media_id, caption=""):
         return self._send_media_by_id(recipient_mobile, "image", media_id, caption)
@@ -105,19 +100,17 @@ class WhatsAppService:
                 actions.append({"type": "reply", "reply": {"id": button_id, "title": title}})
         if not actions:
             return self.send_text_message(recipient_mobile, body)
-        return self._send_with_retry(
-            {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": self._mobile(recipient_mobile),
-                "type": "interactive",
-                "interactive": {
-                    "type": "button",
-                    "body": {"text": str(body).strip()},
-                    "action": {"buttons": actions},
-                },
-            }
-        )
+        return self._send_with_retry({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self._mobile(recipient_mobile),
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": str(body).strip()},
+                "action": {"buttons": actions},
+            },
+        })
 
     def upload_audio(self, audio_bytes, mime_type="audio/ogg", file_name="podx-reply.ogg"):
         if not self.is_configured():
@@ -125,12 +118,7 @@ class WhatsAppService:
         if not audio_bytes:
             return {"success": False, "status": "EMPTY_AUDIO"}
         if len(audio_bytes) > self.MAX_AUDIO_BYTES:
-            return {
-                "success": False,
-                "status": "AUDIO_TOO_LARGE",
-                "actual_bytes": len(audio_bytes),
-                "max_bytes": self.MAX_AUDIO_BYTES,
-            }
+            return {"success": False, "status": "AUDIO_TOO_LARGE", "actual_bytes": len(audio_bytes), "max_bytes": self.MAX_AUDIO_BYTES}
         try:
             response = self._http_client.post(
                 f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}/media",
@@ -141,21 +129,11 @@ class WhatsAppService:
             )
             body = self._safe_json(response)
             if not 200 <= response.status_code < 300:
-                return {
-                    "success": False,
-                    "status": "MEDIA_UPLOAD_HTTP_ERROR",
-                    "http_status": response.status_code,
-                    "provider_response": body,
-                }
+                return {"success": False, "status": "MEDIA_UPLOAD_HTTP_ERROR", "http_status": response.status_code, "provider_response": body}
             media_id = str(body.get("id", "")).strip()
             if not media_id:
                 return {"success": False, "status": "MEDIA_ID_MISSING", "provider_response": body}
-            return {
-                "success": True,
-                "status": "UPLOADED",
-                "media_id": media_id,
-                "provider_response": body,
-            }
+            return {"success": True, "status": "UPLOADED", "media_id": media_id, "provider_response": body}
         except httpx.TimeoutException:
             return {"success": False, "status": "MEDIA_UPLOAD_TIMEOUT"}
         except httpx.HTTPError as exc:
@@ -168,36 +146,21 @@ class WhatsAppService:
         obj = {"id": media_id}
         if as_voice_message:
             obj["voice"] = True
-        return self._send_with_retry(
-            {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": self._mobile(recipient_mobile),
-                "type": "audio",
-                "audio": obj,
-            }
-        )
+        return self._send_with_retry({
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": self._mobile(recipient_mobile),
+            "type": "audio",
+            "audio": obj,
+        })
 
-    def send_voice_bytes(
-        self,
-        recipient_mobile=None,
-        audio_bytes=None,
-        mime_type="audio/ogg",
-        file_name="podx-reply.ogg",
-        m=None,
-    ):
-        # `m` is retained as a backwards-compatible positional/keyword alias.
+    def send_voice_bytes(self, recipient_mobile=None, audio_bytes=None, mime_type="audio/ogg", file_name="podx-reply.ogg", m=None):
         mobile = recipient_mobile if recipient_mobile is not None else m
         start = time.perf_counter()
         upload = self.upload_audio(audio_bytes, mime_type, file_name)
         upload_ms = round((time.perf_counter() - start) * 1000)
         if not upload.get("success"):
-            return {
-                "success": False,
-                "status": "VOICE_UPLOAD_FAILED",
-                "upload_result": upload,
-                "upload_ms": upload_ms,
-            }
+            return {"success": False, "status": "VOICE_UPLOAD_FAILED", "upload_result": upload, "upload_ms": upload_ms}
         send_start = time.perf_counter()
         result = self.send_audio_by_id(mobile, upload["media_id"], True)
         return {
@@ -222,40 +185,22 @@ class WhatsAppService:
             )
             metadata_ms = round((time.perf_counter() - metadata_start) * 1000)
             if not 200 <= metadata_response.status_code < 300:
-                return {
-                    "success": False,
-                    "status": "MEDIA_METADATA_HTTP_ERROR",
-                    "http_status": metadata_response.status_code,
-                    "provider_response": self._safe_json(metadata_response),
-                    "metadata_ms": metadata_ms,
-                }
+                return {"success": False, "status": "MEDIA_METADATA_HTTP_ERROR", "http_status": metadata_response.status_code, "provider_response": self._safe_json(metadata_response), "metadata_ms": metadata_ms}
             metadata_body = metadata_response.json()
             url = str(metadata_body.get("url", "")).strip()
             if not url:
-                return {
-                    "success": False,
-                    "status": "MEDIA_URL_MISSING",
-                    "provider_response": metadata_body,
-                    "metadata_ms": metadata_ms,
-                }
-
+                return {"success": False, "status": "MEDIA_URL_MISSING", "provider_response": metadata_body, "metadata_ms": metadata_ms}
             download_start = time.perf_counter()
-            response = self._http_client.get(url, headers=self._auth_headers(), timeout=60)
+            media_response = self._http_client.get(url, headers=self._auth_headers(), timeout=60)
             download_ms = round((time.perf_counter() - download_start) * 1000)
-            if not 200 <= response.status_code < 300:
-                return {
-                    "success": False,
-                    "status": "MEDIA_DOWNLOAD_HTTP_ERROR",
-                    "http_status": response.status_code,
-                    "metadata_ms": metadata_ms,
-                    "download_ms": download_ms,
-                }
+            if not 200 <= media_response.status_code < 300:
+                return {"success": False, "status": "MEDIA_DOWNLOAD_HTTP_ERROR", "http_status": media_response.status_code, "metadata_ms": metadata_ms, "download_ms": download_ms}
             return {
                 "success": True,
                 "status": "DOWNLOADED",
-                "content": response.content,
-                "mime_type": metadata_body.get("mime_type") or response.headers.get("content-type"),
-                "file_size": len(response.content),
+                "content": media_response.content,
+                "mime_type": metadata_body.get("mime_type") or media_response.headers.get("content-type"),
+                "file_size": len(media_response.content),
                 "metadata_ms": metadata_ms,
                 "download_ms": download_ms,
                 "media_total_ms": round((time.perf_counter() - start) * 1000),
