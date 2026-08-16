@@ -32,28 +32,42 @@ class EventMasterRFQService:
         normalized = self.normalize_services(services)
         if not normalized:
             return {"status": "NO_SERVICES", "children": []}
+
         master_id = self.rfqs.create_rfq(
             requester_user_id=requester_user_id,
             rfq_type="EVENT",
             title=f"{event_type or 'Function'} for {guest_count} guests",
             location_text=location_text,
+            event_date=event_date,
             guest_count=guest_count,
-            notes=f"event_date={event_date or ''}; services={','.join(normalized)}",
+            metadata={"event_type": event_type or "Function", "services": normalized},
             items=[{"name": service, "quantity": 1, "unit": "service", "required": True} for service in normalized],
         )
+
         children = []
         for service in normalized:
+            child_kind = "CATERING" if service == "CATERING" else "SERVICE"
             child_id = self.rfqs.create_rfq(
                 requester_user_id=requester_user_id,
-                rfq_type=service,
+                rfq_type=child_kind,
                 title=f"{service.title()} for {event_type or 'Function'}",
                 location_text=location_text,
+                event_date=event_date,
                 guest_count=guest_count,
-                notes=f"master_event_rfq={master_id}; event_date={event_date or ''}",
-                items=[{"name": service, "quantity": guest_count if service == "CATERING" else 1,
-                        "unit": "guest" if service == "CATERING" else "service", "required": True}],
+                metadata={
+                    "master_event_rfq_id": master_id,
+                    "service_type": service,
+                    "event_type": event_type or "Function",
+                },
+                items=[{
+                    "name": service,
+                    "category": service,
+                    "quantity": guest_count if service == "CATERING" else 1,
+                    "unit": "guest" if service == "CATERING" else "service",
+                    "required": True,
+                }],
             )
-            children.append({"service": service, "rfq_id": child_id})
+            children.append({"service": service, "rfq_id": child_id, "rfq_type": child_kind})
         return {"status": "CREATED", "master_rfq_id": master_id, "children": children}
 
     @classmethod
