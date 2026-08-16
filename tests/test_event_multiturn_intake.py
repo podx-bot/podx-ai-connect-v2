@@ -72,7 +72,7 @@ def test_followup_extractor_bypasses_event_keyword_gate_with_saved_context():
     output = '''{"is_event_request":true,"event_type":"Birthday","guest_count":100,"location_text":"Vuyyuru","event_date":null,"services":["HALL"],"confidence":0.96}'''
     client = FakeClient([output])
     extractor = EventIntentExtractor(client=client)
-    result = extractor.extract_followup({"event_type":"Birthday","guest_count":null,"location_text":"Vuyyuru","services":["HALL"]}, "100")
+    result = extractor.extract_followup({"event_type":"Birthday","guest_count":None,"location_text":"Vuyyuru","services":["HALL"]}, "100")
     assert result["guest_count"] == 100
     assert result["missing"] == []
     assert client.interactions.calls == 1
