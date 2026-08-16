@@ -61,17 +61,10 @@ class CateringCatalogRepository:
                 (str(provider_user_id), self._clean(business_name), now, now),
             )
 
-    def add_item(
-        self,
-        provider_user_id: str,
-        item_name: str,
-        category: str | None = None,
-        default_price: float | None = None,
-        price_basis: str | None = None,
-        source: str = "text",
-    ) -> int | None:
-        name = self._clean(item_name)
-        norm = self._norm(name)
+    def add_item(self, provider_user_id: str, item_name: str, category: str | None = None,
+                 default_price: float | None = None, price_basis: str | None = None,
+                 source: str = "text") -> int | None:
+        name = self._clean(item_name); norm = self._norm(name)
         if not norm:
             return None
         self.enable_provider(provider_user_id)
@@ -86,11 +79,9 @@ class CateringCatalogRepository:
                      default_price=COALESCE(excluded.default_price,catering_catalog_items.default_price),
                      price_basis=COALESCE(excluded.price_basis,catering_catalog_items.price_basis),
                      active=1,source=excluded.source,updated_at=excluded.updated_at""",
-                (
-                    str(provider_user_id), name, norm, self._clean(category),
-                    float(default_price) if default_price is not None else None,
-                    self._clean(price_basis), str(source), now, now,
-                ),
+                (str(provider_user_id), name, norm, self._clean(category),
+                 float(default_price) if default_price is not None else None,
+                 self._clean(price_basis), str(source), now, now),
             )
             row = conn.execute(
                 "SELECT id FROM catering_catalog_items WHERE provider_user_id=? AND normalized_name=?",
@@ -102,14 +93,9 @@ class CateringCatalogRepository:
         count = 0
         for item in items or []:
             data = {"item_name": item} if isinstance(item, str) else dict(item)
-            if self.add_item(
-                provider_user_id,
-                data.get("item_name") or data.get("name"),
-                category=data.get("category"),
-                default_price=data.get("default_price") or data.get("price"),
-                price_basis=data.get("price_basis"),
-                source=source,
-            ) is not None:
+            if self.add_item(provider_user_id, data.get("item_name") or data.get("name"),
+                             category=data.get("category"), default_price=data.get("default_price") or data.get("price"),
+                             price_basis=data.get("price_basis"), source=source) is not None:
                 count += 1
         return count
 
@@ -118,6 +104,14 @@ class CateringCatalogRepository:
             rows = conn.execute(
                 "SELECT * FROM catering_catalog_items WHERE provider_user_id=? AND active=1 ORDER BY item_name",
                 (str(provider_user_id),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_active_providers(self, limit: int = 30) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT provider_user_id,business_name,updated_at FROM catering_profiles WHERE active=1 ORDER BY updated_at DESC LIMIT ?",
+                (max(1, int(limit)),),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -133,8 +127,7 @@ class CateringCatalogRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT c.provider_user_id,c.item_name,c.normalized_name,p.business_name
-                   FROM catering_catalog_items c
-                   JOIN catering_profiles p ON p.provider_user_id=c.provider_user_id
+                   FROM catering_catalog_items c JOIN catering_profiles p ON p.provider_user_id=c.provider_user_id
                    WHERE c.active=1 AND p.active=1"""
             ).fetchall()
         matched: Dict[str, Dict[str, Any]] = {}
@@ -143,25 +136,16 @@ class CateringCatalogRepository:
             if not hits:
                 continue
             provider_id = str(row["provider_user_id"])
-            entry = matched.setdefault(
-                provider_id,
-                {"provider_user_id": provider_id, "business_name": row["business_name"], "matched_items": set()},
-            )
+            entry = matched.setdefault(provider_id, {"provider_user_id": provider_id, "business_name": row["business_name"], "matched_items": set()})
             for requested in wanted:
                 if self._similar(requested, str(row["normalized_name"])):
                     entry["matched_items"].add(requested)
         result = []
         for entry in matched.values():
             count = len(entry["matched_items"])
-            result.append(
-                {
-                    "provider_user_id": entry["provider_user_id"],
-                    "business_name": entry["business_name"],
-                    "matched_items": count,
-                    "requested_items": len(wanted),
-                    "match_percent": round((count / len(wanted)) * 100, 1),
-                }
-            )
+            result.append({"provider_user_id": entry["provider_user_id"], "business_name": entry["business_name"],
+                           "matched_items": count, "requested_items": len(wanted),
+                           "match_percent": round((count / len(wanted)) * 100, 1)})
         result.sort(key=lambda row: (-row["matched_items"], str(row["provider_user_id"])))
         return result[: max(1, int(limit))]
 
