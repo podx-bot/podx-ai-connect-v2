@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from typing import Any, Dict, List, Optional
 
 from google import genai
@@ -13,11 +14,12 @@ class ProductPriceListAIService:
     MODELS = ("gemini-3.6-flash", "gemini-3.5-flash")
 
     def __init__(self, api_key: str, catalog_repository, pending_repository, user_repository=None,
-                 client: Any | None = None) -> None:
+                 client: Any | None = None, reengagement_service=None) -> None:
         self.catalog = catalog_repository
         self.pending = pending_repository
         self.users = user_repository
         self.client = client or (genai.Client(api_key=api_key) if api_key else None)
+        self.reengagement = reengagement_service
 
     def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
         clean = " ".join(str(message or "").casefold().strip().split())
@@ -52,9 +54,9 @@ class ProductPriceListAIService:
         pending = self.pending.get(seller_user_id)
         if not pending or not pending.get("items"):
             return "Confirm చేయడానికి pending Product Price List లేదు."
-        count = 0
+        product_ids: List[int] = []
         for item in pending["items"]:
-            self.catalog.upsert_product(
+            product_id = self.catalog.upsert_product(
                 seller_user_id=seller_user_id,
                 subject=item["subject"],
                 brand=item.get("brand"),
@@ -67,9 +69,27 @@ class ProductPriceListAIService:
                 delivery_available=bool(item.get("delivery_available")),
                 pickup_available=True,
             )
-            count += 1
+            product_ids.append(int(product_id))
         self.pending.clear(seller_user_id)
-        return f"✅ {count} product(s) మీ Product Catalogలో add/update అయ్యాయి."
+        self._start_reengagement(str(seller_user_id), product_ids)
+        return f"✅ {len(product_ids)} product(s) మీ Product Catalogలో add/update అయ్యాయి."
+
+    def _start_reengagement(self, seller_user_id: str, product_ids: List[int]) -> None:
+        if self.reengagement is None or not product_ids:
+            return
+
+        def run() -> None:
+            for product_id in product_ids:
+                try:
+                    self.reengagement.notify_product_available(seller_user_id, product_id)
+                except Exception as error:
+                    print(
+                        f"PODX SMART REENGAGEMENT: seller={seller_user_id} product={product_id} "
+                        f"failed={type(error).__name__}: {error}",
+                        flush=True,
+                    )
+
+        threading.Thread(target=run, name="podx-reengagement", daemon=True).start()
 
     def cancel(self, seller_user_id: str) -> str:
         pending = self.pending.get(seller_user_id)
