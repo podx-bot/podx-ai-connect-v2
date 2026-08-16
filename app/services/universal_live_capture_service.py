@@ -16,7 +16,7 @@ class UniversalLiveCaptureService:
 
     def __init__(self, extractor, demand_repository, matcher, targeting_service,
                  notification_service, notification_repository, user_repository,
-                 session_registry, min_confidence: float = 0.62) -> None:
+                 session_registry, min_confidence: float = 0.62, demand_intelligence=None) -> None:
         self.extractor = extractor
         self.demands = demand_repository
         self.matcher = matcher
@@ -26,6 +26,7 @@ class UniversalLiveCaptureService:
         self.users = user_repository
         self.sessions = session_registry
         self.min_confidence = float(min_confidence)
+        self.demand_intelligence = demand_intelligence
 
     def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
         text = " ".join(str(message or "").strip().split())
@@ -70,6 +71,7 @@ class UniversalLiveCaptureService:
         if stored.get("latitude") is None or stored.get("longitude") is None:
             subject = stored.get("subject") or "మీ requirement"
             return f"✅ '{subject}' requirement save చేశాను. మీకు దగ్గరలో సరైన match వెతకడానికి Current Location share చేయండి."
+        self._trigger_demand_intelligence(stored)
         return self._match_target_notify(stored)
 
     def handle_location(self, sender_mobile: str, latitude: float, longitude: float,
@@ -83,7 +85,18 @@ class UniversalLiveCaptureService:
         self.demands.update_location(demand_id=int(pending["id"]), latitude=latitude, longitude=longitude,
                                      location_text=location_text)
         stored = self.demands.get(int(pending["id"])) or pending
+        self._trigger_demand_intelligence(stored)
         return self._match_target_notify(stored, location_saved=True)
+
+    def _trigger_demand_intelligence(self, request: Dict[str, Any]) -> None:
+        if self.demand_intelligence is None:
+            return
+        if str(request.get("side") or "").upper() != "NEED":
+            return
+        try:
+            self.demand_intelligence.trigger_async()
+        except Exception:
+            return
 
     def _can_capture(self, sender_mobile: str) -> bool:
         user = self.users.find_by_whatsapp_mobile(sender_mobile) or {}
