@@ -10,8 +10,9 @@ class AppointmentLocationMiddleware:
     """Handle location-sensitive flows before the main webhook route.
 
     Appointment location keeps first priority. If no appointment is waiting, a
-    pending Universal Flow request can consume the shared GPS location. Other
-    location webhooks are replayed untouched to the existing route.
+    pending Universal Flow request can consume the shared GPS location. Active
+    mobile vendors are third priority. Other location webhooks are replayed
+    untouched to the existing route.
     """
 
     def __init__(self, app, container) -> None:
@@ -60,6 +61,19 @@ class AppointmentLocationMiddleware:
                     location_address=incoming.address,
                 )
                 flow_name = "universal"
+            if reply_text is None:
+                vendor_runtime = getattr(
+                    getattr(self.container, "product_buyer_runtime_service", None),
+                    "street_vendor_runtime",
+                    None,
+                )
+                if vendor_runtime is not None:
+                    reply_text = vendor_runtime.handle_shared_location(
+                        vendor_mobile=incoming.sender_mobile,
+                        latitude=incoming.latitude,
+                        longitude=incoming.longitude,
+                    )
+                    flow_name = "street_vendor"
             if reply_text is None:
                 continue
 
