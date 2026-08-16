@@ -6,6 +6,9 @@ import re
 from app.services.ride_natural_intake_service import RideNaturalIntakeService
 
 class RideRuntimeService:
+    DRIVER_ACCEPT_WORDS={"accept","accept చేయి","accept cheyi","యాక్సెప్ట్","అక్సెప్ట్","स्वीकार","accept it"}
+    DRIVER_REJECT_WORDS={"reject","reject చేయి","reject cheyi","రిజెక్ట్","अस्वीकार","reject it"}
+
     def __init__(self, repository, whatsapp_service, user_repository=None, admin_mobile: str | None = None, natural_intake=None) -> None:
         self.rides=repository; self.whatsapp=whatsapp_service; self.users=user_repository
         self.natural_intake=natural_intake or RideNaturalIntakeService(getattr(repository,'db_path','podx.db'))
@@ -25,6 +28,15 @@ class RideRuntimeService:
         if match:return self._book(sender_user_id,int(match.group(1)),int(match.group(2) or 1))
         match=re.fullmatch(r"(?i)RIDE\s+(ACCEPT|REJECT)\s+(\d+)",clean)
         if match:return self._decide(sender_user_id,int(match.group(2)),match.group(1).upper()=="ACCEPT")
+
+        natural_book=re.fullmatch(r"(?i)(?:book\s+ride|ride\s+book|ride\s+బుక్|బుక్\s+ride|राइड\s+बुक|बुक\s+राइड)\s*#?(\d+)(?:\s*[,|-]?\s*(\d+)\s*(?:seats?|సీట్లు|సీట్స్|सीट|सीटें))?",clean)
+        if natural_book:return self._book(sender_user_id,int(natural_book.group(1)),int(natural_book.group(2) or 1))
+
+        if lowered in self.DRIVER_ACCEPT_WORDS or lowered in self.DRIVER_REJECT_WORDS:
+            pending=self.rides.latest_requested_booking_for_driver(sender_user_id)
+            if pending is not None:
+                return self._decide(sender_user_id,int(pending['id']),lowered in self.DRIVER_ACCEPT_WORDS)
+
         if self.natural_intake is not None:
             intake=self.natural_intake.process(str(sender_user_id),clean)
             if intake is not None:
@@ -60,7 +72,7 @@ class RideRuntimeService:
         for ride in rides:
             fare=f" • ₹{float(ride['fare_per_seat']):g}/seat" if ride.get('fare_per_seat') is not None else ''
             lines.append(f"#{ride['id']} {ride['origin']} → {ride['destination']} | {ride['travel_date']} {ride['travel_time']} | {ride['seats_available']} seats{fare}")
-        lines.append('Seat request కోసం RIDE BOOK <Ride ID> పంపండి.');return '\n'.join(lines)
+        lines.append('Seat request కోసం “Book ride <Ride ID>” అని పంపండి. ఉదా: Book ride 12, 2 seats.');return '\n'.join(lines)
 
     def _book(self,passenger_user_id,ride_id,seats):
         ride=self.rides.get_ride(ride_id)
@@ -71,7 +83,7 @@ class RideRuntimeService:
         if status=='NOT_ENOUGH_SEATS':return "ఆ rideలో అంతమంది seats ప్రస్తుతం available లేవు."
         if status!='REQUESTED':return "ఈ ride ప్రస్తుతం bookingకి openగా లేదు."
         booking_id=int(result['booking_id']);driver_mobile=self._mobile(str(ride['driver_user_id']));passenger_name=self._name(passenger_user_id,'Passenger')
-        self.whatsapp.send_text_message(driver_mobile,"🚗 PODX Seat Request\n"+f"Booking: #{booking_id}\nRide: #{ride_id} {ride['origin']} → {ride['destination']}\n"+f"Passenger: {passenger_name}\nSeats: {seats}\n\n"+f"Accept: RIDE ACCEPT {booking_id}\nReject: RIDE REJECT {booking_id}")
+        self.whatsapp.send_text_message(driver_mobile,"🚗 PODX Seat Request\n"+f"Booking: #{booking_id}\nRide: #{ride_id} {ride['origin']} → {ride['destination']}\n"+f"Passenger: {passenger_name}\nSeats: {seats}\n\n"+"Reply Accept లేదా Reject.\n"+f"Commands కూడా పని చేస్తాయి: RIDE ACCEPT {booking_id} / RIDE REJECT {booking_id}")
         return f"✅ Seat request #{booking_id} driverకి పంపాను. Driver confirmation వచ్చిన తర్వాత seat confirm అవుతుంది."
 
     def _decide(self,driver_user_id,booking_id,accept):

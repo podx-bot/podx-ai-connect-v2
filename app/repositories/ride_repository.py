@@ -52,6 +52,10 @@ class RideRepository:
     def get_booking(self,booking_id):
         with self._connect() as conn: row=conn.execute("SELECT * FROM ride_bookings WHERE id=?",(int(booking_id),)).fetchone()
         return dict(row) if row else None
+    def latest_requested_booking_for_driver(self,driver_user_id):
+        with self._connect() as conn:
+            row=conn.execute("""SELECT b.* FROM ride_bookings b JOIN rides r ON r.id=b.ride_id WHERE r.driver_user_id=? AND b.status='REQUESTED' ORDER BY b.id DESC LIMIT 1""",(str(driver_user_id),)).fetchone()
+        return dict(row) if row else None
     def decide_booking(self,booking_id,driver_user_id,accept):
         with self._connect() as conn:
             conn.execute('BEGIN IMMEDIATE'); booking=conn.execute("SELECT * FROM ride_bookings WHERE id=?",(int(booking_id),)).fetchone()
