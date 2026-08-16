@@ -11,6 +11,7 @@ from app.api.routes.webhook import (
     receive_webhook as legacy_receive_webhook,
     visible_log,
 )
+from app.services.webhook_recovery_service import WebhookRecoveryService
 from app.whatsapp.payload_parser import (
     extract_audio_messages,
     extract_delivery_statuses,
@@ -44,11 +45,7 @@ def _safe_text_send(container, recipient_mobile: str, message: str, stage: str) 
             f"WHATSAPP FAST TEXT SEND ERROR: stage={stage} recipient={recipient_mobile} "
             f"error={type(error).__name__}: {error}"
         )
-        return {
-            "success": False,
-            "status": "TEXT_SEND_EXCEPTION",
-            "error": str(error),
-        }
+        return {"success": False, "status": "TEXT_SEND_EXCEPTION", "error": str(error)}
 
 
 def _safe_spoken_reply(container, recipient_mobile: str, reply_text: str) -> dict:
@@ -60,11 +57,20 @@ def _safe_spoken_reply(container, recipient_mobile: str, reply_text: str) -> dic
             f"PODX VOICE REPLY ISOLATED ERROR: sender={recipient_mobile} "
             f"error={type(error).__name__}: {error}"
         )
-        return {
-            "success": False,
-            "status": "VOICE_REPLY_EXCEPTION",
-            "error": str(error),
-        }
+        return {"success": False, "status": "VOICE_REPLY_EXCEPTION", "error": str(error)}
+
+
+def _recover(container, incoming, kind: str) -> dict:
+    result = WebhookRecoveryService.send(
+        container.whatsapp_service,
+        getattr(incoming, "sender_mobile", ""),
+        kind,
+    )
+    visible_log(
+        f"WHATSAPP RECOVERY NOTICE: kind={kind} sender={getattr(incoming, 'sender_mobile', '')} "
+        f"success={bool(result.get('success'))}"
+    )
+    return result
 
 
 def _process_audio_background(container, incoming) -> None:
@@ -107,10 +113,6 @@ def _process_audio_background(container, incoming) -> None:
         visible_log(
             f"VOICE LATENCY: id={request_id} stage=text_send ms={_elapsed_ms(stage_started)} success={bool(send_result.get('success'))} total_to_text_ms={_elapsed_ms(total_started)}"
         )
-
-        # Text and voice are deliberately failure-isolated. Even if text delivery
-        # raises at the transport layer, a valid transcript can still receive the
-        # spoken reply; likewise TTS failure cannot undo the text response.
         if transcript is not None:
             stage_started = time.perf_counter()
             voice_result = _safe_spoken_reply(container, incoming.sender_mobile, reply_text)
@@ -119,6 +121,7 @@ def _process_audio_background(container, incoming) -> None:
             )
     except Exception as error:
         visible_log(f"WHATSAPP BACKGROUND AUDIO ERROR: {type(error).__name__}: {error}")
+        _recover(container, incoming, "audio")
 
 
 def _process_image_background(container, incoming) -> None:
@@ -161,9 +164,7 @@ def _process_image_background(container, incoming) -> None:
                         media_ref=incoming.media_id,
                         caption=incoming.caption,
                     )
-                visible_log(
-                    f"IMAGE LATENCY: id={request_id} stage=ai_match ms={_elapsed_ms(stage_started)}"
-                )
+                visible_log(f"IMAGE LATENCY: id={request_id} stage=ai_match ms={_elapsed_ms(stage_started)}")
         stage_started = time.perf_counter()
         send_result = _safe_text_send(
             container,
@@ -176,6 +177,7 @@ def _process_image_background(container, incoming) -> None:
         )
     except Exception as error:
         visible_log(f"WHATSAPP BACKGROUND IMAGE ERROR: {type(error).__name__}: {error}")
+        _recover(container, incoming, "image")
 
 
 def _process_document_background(container, incoming) -> None:
@@ -225,6 +227,7 @@ def _process_document_background(container, incoming) -> None:
         )
     except Exception as error:
         visible_log(f"WHATSAPP BACKGROUND DOCUMENT ERROR: {type(error).__name__}: {error}")
+        _recover(container, incoming, "document")
 
 
 @router.get("/webhook", response_class=PlainTextResponse)
@@ -275,19 +278,12 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"AUDIO:{incoming.media_id}",
             )
-            # ACK is best effort only. Once the inbound message is persisted the
-            # actual processing must still run even if Meta temporarily rejects
-            # the acknowledgement send.
-            _safe_text_send(
-                container,
-                recipient_mobile=incoming.sender_mobile,
-                message=VOICE_ACK_TEXT,
-                stage="voice_ack",
-            )
+            _safe_text_send(container, incoming.sender_mobile, VOICE_ACK_TEXT, "voice_ack")
             background_tasks.add_task(_process_audio_background, container, incoming)
             accepted_audio += 1
         except Exception as error:
             visible_log(f"WHATSAPP FAST AUDIO ACCEPT ERROR: {type(error).__name__}: {error}")
+            _recover(container, incoming, "audio")
 
     for incoming in image_messages:
         try:
@@ -298,16 +294,12 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"IMAGE:{incoming.media_id}",
             )
-            _safe_text_send(
-                container,
-                recipient_mobile=incoming.sender_mobile,
-                message=IMAGE_ACK_TEXT,
-                stage="image_ack",
-            )
+            _safe_text_send(container, incoming.sender_mobile, IMAGE_ACK_TEXT, "image_ack")
             background_tasks.add_task(_process_image_background, container, incoming)
             accepted_images += 1
         except Exception as error:
             visible_log(f"WHATSAPP FAST IMAGE ACCEPT ERROR: {type(error).__name__}: {error}")
+            _recover(container, incoming, "image")
 
     for incoming in document_messages:
         try:
@@ -318,30 +310,19 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
                 sender_mobile=incoming.sender_mobile,
                 message_text=f"DOCUMENT:{incoming.media_id}",
             )
-            _safe_text_send(
-                container,
-                recipient_mobile=incoming.sender_mobile,
-                message=DOCUMENT_ACK_TEXT,
-                stage="document_ack",
-            )
+            _safe_text_send(container, incoming.sender_mobile, DOCUMENT_ACK_TEXT, "document_ack")
             background_tasks.add_task(_process_document_background, container, incoming)
             accepted_documents += 1
         except Exception as error:
             visible_log(f"WHATSAPP FAST DOCUMENT ACCEPT ERROR: {type(error).__name__}: {error}")
+            _recover(container, incoming, "document")
 
-    # Meta may batch a voice/media event together with text, location, or delivery
-    # statuses. Previously that forced the entire payload onto the synchronous
-    # legacy audio path. Media IDs are already persisted above, so the legacy
-    # handler can safely process the non-media events and will skip the duplicate
-    # audio item.
     legacy_followup = None
     if text_messages or location_messages or statuses:
         try:
             legacy_followup = await legacy_receive_webhook(request)
         except Exception as error:
-            visible_log(
-                f"WHATSAPP FAST LEGACY FOLLOWUP ERROR: {type(error).__name__}: {error}"
-            )
+            visible_log(f"WHATSAPP FAST LEGACY FOLLOWUP ERROR: {type(error).__name__}: {error}")
             legacy_followup = {"status": "followup_error", "error": str(error)}
 
     return {
@@ -352,7 +333,5 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -
         "background_image_count": accepted_images,
         "incoming_document_count": len(document_messages),
         "background_document_count": accepted_documents,
-        "legacy_followup_status": (
-            legacy_followup.get("status") if isinstance(legacy_followup, dict) else None
-        ),
+        "legacy_followup_status": legacy_followup.get("status") if isinstance(legacy_followup, dict) else None,
     }
