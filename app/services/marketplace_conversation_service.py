@@ -20,6 +20,11 @@ class MarketplaceConversationService(RoleAwareConversationService):
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
         registered = bool(existing_user and existing_user.get("registration_complete") == 1)
 
+        if registered and self.appointment_service is not None:
+            appointment_command = self.appointment_service.process_provider_command(sender_mobile, clean_message)
+            if appointment_command is not None:
+                return self._reply(sender_mobile, appointment_command)
+
         if registered and normalized in self.ROLE_COMMANDS:
             return super().process(sender_mobile, clean_message)
 

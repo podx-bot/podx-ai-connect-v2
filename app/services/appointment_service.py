@@ -12,9 +12,18 @@ class AppointmentService:
         "5": "Other", "other": "Other", "ఇతర": "Other",
     }
 
-    def __init__(self, repository, session_registry) -> None:
+    def __init__(self, repository, session_registry, provider_runtime=None) -> None:
         self.repository = repository
         self.session_registry = session_registry
+        self.provider_runtime = provider_runtime
+
+    def set_provider_runtime(self, provider_runtime) -> None:
+        self.provider_runtime = provider_runtime
+
+    def process_provider_command(self, sender_mobile: str, message: str) -> str | None:
+        if self.provider_runtime is None:
+            return None
+        return self.provider_runtime.process_provider_command(sender_mobile, message)
 
     def start(self, sender_mobile: str, initial_message: str = "") -> str:
         session = self.session_registry.get(sender_mobile)
@@ -94,13 +103,21 @@ class AppointmentService:
             preferred_date=preferred_date,
             preferred_time=preferred_time,
         )
+        provider_result = None
+        if self.provider_runtime is not None:
+            try:
+                provider_result = self.provider_runtime.notify_matching_providers(request)
+            except Exception as error:
+                print(f"PODX APPOINTMENT PROVIDER NOTIFY failed={type(error).__name__}: {error}", flush=True)
         session.step = ConversationStep.MAIN_MENU
         session.data.clear()
         self.session_registry.save(sender_mobile)
+        provider_note = "\nMatching providersకి request పంపాను." if provider_result and int(provider_result.get("sent") or 0) > 0 else "\nRequest save అయింది. Matching provider available అయినప్పుడు PODX connect చేస్తుంది."
         return (
             "✅ Appointment request save అయింది.\n\n"
             f"Request ID: #{request['id']}\nType: {request['category']}\n"
             f"Place: {request['area']}\nDate: {request['preferred_date']}\nTime: {request['preferred_time']}"
+            + provider_note
         )
 
     @classmethod
