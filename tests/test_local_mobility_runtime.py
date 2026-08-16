@@ -40,6 +40,8 @@ def test_bike_request_offers_nearby_and_first_accept_wins(tmp_path):
     users=FakeUsers(); wa=FakeWhatsApp(); runtime=LocalMobilityRuntimeService(str(tmp_path/'m.db'),users,wa)
     reply=runtime.process("buyer","BIKE Benz Circle | Railway Station")
     assert "Bike Taxi request #1" in reply
+    assert not [row for row in wa.sent if row[0]=="buttons"]
+    assert "confirmed" in runtime.process("buyer","MOB CONFIRM 1")
     offered={row[1] for row in wa.sent if row[0]=="buttons"}
     assert offered=={"r1","r2"}
     assert "assign" in runtime.process("r1","MOB ACCEPT 1")
@@ -51,6 +53,7 @@ def test_parcel_lifecycle_notifies_requester(tmp_path):
     users=FakeUsers(); wa=FakeWhatsApp(); runtime=LocalMobilityRuntimeService(str(tmp_path/'p.db'),users,wa)
     reply=runtime.process("buyer","PARCEL Vuyyuru | Vijayawada | documents")
     assert "Parcel request #1" in reply
+    assert "confirmed" in runtime.process("buyer","MOB CONFIRM 1")
     assert "assign" in runtime.process("r2","MOB ACCEPT 1")
     assert "Pickup saved" in runtime.process("r2","MOB PICKUP 1")
     assert "On the way" in runtime.process("r2","MOB ONWAY 1")
