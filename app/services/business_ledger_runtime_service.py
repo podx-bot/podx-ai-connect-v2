@@ -11,12 +11,23 @@ class BusinessLedgerRuntimeService:
 
     def process(self, sender_user_id: str, message: str) -> str | None:
         clean = " ".join(str(message or "").strip().split())
-        if not clean.casefold().startswith("ledger "):
+        explicit = clean.casefold().startswith("ledger ")
+        natural = None if explicit else self._parse_natural(clean)
+        if not explicit and natural is None:
             return None
         if self.users is not None:
             user = self.users.find_by_whatsapp_mobile(str(sender_user_id)) or {}
             if int(user.get("registration_complete") or 0) != 1:
                 return "ముందుగా PODX registration complete చేయండి."
+
+        if natural is not None:
+            if natural["action"] == "BALANCE":
+                return self._balance_reply(natural["party"], self.ledger.balance(sender_user_id, natural["party"]))
+            entry_id = self.ledger.add_entry(
+                sender_user_id, natural["party"], natural["entry_type"], natural["amount"], natural.get("note")
+            )
+            balance = self.ledger.balance(sender_user_id, natural["party"])
+            return self._entry_reply(entry_id, natural["party"], natural["entry_type"], natural["amount"], balance)
 
         body = clean[7:].strip()
         add = re.fullmatch(
@@ -71,6 +82,53 @@ class BusinessLedgerRuntimeService:
             "• LEDGER BALANCE <NAME optional>\n"
             "• LEDGER STATEMENT <NAME optional>"
         )
+
+    @classmethod
+    def _parse_natural(cls, text: str):
+        clean = " ".join(str(text or "").strip().split())
+        lowered = clean.casefold()
+        if not clean:
+            return None
+
+        balance_patterns = (
+            r"(?i)^(.+?)\s+(?:balance|బ్యాలెన్స్)\s*(?:ఎంత|entha|what|చెప్పు|చెప్పండి)?\??$",
+            r"(?i)^(?:what is\s+)?(.+?)['’]?s?\s+balance\??$",
+        )
+        for pattern in balance_patterns:
+            m = re.fullmatch(pattern, clean)
+            if m:
+                party = cls._clean_party(m.group(1))
+                return {"action": "BALANCE", "party": party} if party else None
+
+        patterns = (
+            ("RECEIVED", r"(?i)^(.+?)\s+(?:నుంచి|నుండి)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:వచ్చింది|వచ్చాయి|తీసుకున్నాను|received|receive అయ్యింది)$"),
+            ("PAID", r"(?i)^(.+?)\s*(?:కి|కు)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:ఇచ్చాను|చెల్లించాను|paid|pay చేశాను)$"),
+            ("RECEIVABLE", r"(?i)^(.+?)\s+(?:నుంచి|నుండి)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:రావాలి|రావాల్సి ఉంది|due|receivable)$"),
+            ("PAYABLE", r"(?i)^(.+?)\s*(?:కి|కు)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?:ఇవ్వాలి|చెల్లించాలి|due|payable)$"),
+            ("RECEIVABLE", r"(?i)^(.+?)\s+(?:owes me|has to pay me)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)$"),
+            ("PAYABLE", r"(?i)^i\s+(?:owe|have to pay)\s+(.+?)\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)$"),
+            ("RECEIVED", r"(?i)^received\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s+from\s+(.+?)$"),
+            ("PAID", r"(?i)^paid\s*₹?\s*([0-9]+(?:\.[0-9]{1,2})?)\s+to\s+(.+?)$"),
+        )
+        for kind, pattern in patterns:
+            m = re.fullmatch(pattern, clean)
+            if not m:
+                continue
+            if kind in {"RECEIVED", "PAID"} and lowered.startswith(("received", "paid")):
+                amount = float(m.group(1)); party = cls._clean_party(m.group(2))
+            else:
+                party = cls._clean_party(m.group(1)); amount = float(m.group(2))
+            if party and amount > 0:
+                return {"action": "ENTRY", "entry_type": kind, "party": party, "amount": amount}
+        return None
+
+    @staticmethod
+    def _clean_party(value: str) -> str:
+        party = " ".join(str(value or "").strip(" ,.-").split())
+        for prefix in ("ledger ", "account "):
+            if party.casefold().startswith(prefix):
+                party = party[len(prefix):].strip()
+        return party
 
     @staticmethod
     def _entry_reply(entry_id: int, party: str, kind: str, amount: float, balance: float) -> str:
