@@ -17,6 +17,14 @@ class CateringMenuAIService:
         self.pending = pending_repository
         self.client = client or (genai.Client(api_key=api_key) if api_key else None)
 
+    def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
+        clean = " ".join(str(message or "").casefold().strip().split())
+        if clean in {"cmenu confirm", "menu confirm", "confirm menu"}:
+            return self.confirm(sender_mobile)
+        if clean in {"cmenu cancel", "menu cancel", "cancel menu"}:
+            return self.cancel(sender_mobile)
+        return None
+
     def process_media(
         self,
         sender_mobile: str,
