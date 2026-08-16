@@ -70,6 +70,8 @@ class DemandIntelligenceService:
                     user_id = str(target.get("user_id") or "")
                     if user_id and user_id not in recipients:
                         recipients.append(user_id)
+            if self.alert_preferences is not None:
+                recipients = [user_id for user_id in recipients if self.alert_preferences.is_enabled(user_id)]
             if not recipients:
                 continue
 
@@ -79,8 +81,6 @@ class DemandIntelligenceService:
 
             delivered_recipients = []
             for user_id in recipients:
-                if self.alert_preferences is not None and not self.alert_preferences.is_enabled(user_id):
-                    continue
                 contact = self.contact_resolver(user_id) or {}
                 mobile = str(contact.get("mobile") or user_id)
                 self.whatsapp.send_text_message(mobile, self._message(newest, count=len(requests)))
