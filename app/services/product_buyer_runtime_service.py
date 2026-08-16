@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from app.repositories.hybrid_support_repository import HybridSupportRepository
 from app.repositories.product_pricelist_pending_repository import ProductPriceListPendingRepository
 from app.repositories.reengagement_repository import ReengagementRepository
+from app.services.hybrid_support_service import HybridSupportService
 from app.services.product_pricelist_ai_service import ProductPriceListAIService
 from app.services.smart_reengagement_service import SmartReengagementService
 
@@ -23,7 +25,7 @@ class ProductBuyerRuntimeService:
 
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
                  buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
-                 price_list_ai=None, whatsapp_service=None, reengagement_service=None) -> None:
+                 price_list_ai=None, whatsapp_service=None, reengagement_service=None, hybrid_support=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -34,6 +36,15 @@ class ProductBuyerRuntimeService:
         self.seller_escalation = seller_escalation
         db_path = getattr(catalog_repository, "db_path", "podx.db")
         effective_whatsapp = whatsapp_service or getattr(seller_escalation, "whatsapp", None)
+        contact_resolver = getattr(seller_escalation, "contact_resolver", None)
+        self.hybrid_support = hybrid_support
+        if self.hybrid_support is None and effective_whatsapp is not None and contact_resolver is not None and getattr(rag_service, "repository", None) is not None:
+            self.hybrid_support = HybridSupportService(
+                repository=HybridSupportRepository(db_path),
+                rag_repository=rag_service.repository,
+                whatsapp_service=effective_whatsapp,
+                contact_resolver=contact_resolver,
+            )
         self.reengagement = reengagement_service
         if self.reengagement is None and user_repository is not None and effective_whatsapp is not None:
             self.reengagement = SmartReengagementService(
