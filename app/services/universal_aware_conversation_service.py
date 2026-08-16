@@ -6,10 +6,13 @@ from zoneinfo import ZoneInfo
 class UniversalAwareConversationService:
     GREETING_WORDS={"hi","hello","hey","హాయ్","హలో","नमस्ते","हाय"}
     PRODUCT_QUESTION_WORDS=("?","ధర","price","ఎంత","available","availability","stock","size","weight","quantity","delivery","warranty","return","expiry","feature","features","original","color","colour","variant","దొరుకుతుందా","ఉందా","ఎలా","ఏమిటి","doubt","details")
-    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None)->None:
-        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime
+    def __init__(self,response_commands,base_conversation,live_capture=None,image_service=None,product_runtime=None,seller_escalation=None,grocery_runtime=None,grocery_order_runtime=None,catering_runtime=None,catering_menu_ai=None)->None:
+        self.response_commands=response_commands; self.live_capture=live_capture; self.image_service=image_service; self.base_conversation=base_conversation; self.product_runtime=product_runtime; self.seller_escalation=seller_escalation; self.grocery_runtime=grocery_runtime; self.grocery_order_runtime=grocery_order_runtime; self.catering_runtime=catering_runtime; self.catering_menu_ai=catering_menu_ai
     def process(self,sender_mobile:str,message:str)->str:
         clean=str(message or "").strip(); normalized=clean.casefold()
+        if self.catering_menu_ai is not None:
+            menu_reply=self.catering_menu_ai.process_text(sender_mobile,clean)
+            if menu_reply is not None:return menu_reply
         if self.catering_runtime is not None:
             catering=self.catering_runtime.process(sender_mobile,clean)
             if catering is not None:return catering
