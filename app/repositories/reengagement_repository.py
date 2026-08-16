@@ -57,3 +57,10 @@ class ReengagementRepository:
             return True
         except sqlite3.IntegrityError:
             return False
+
+    def release(self, buyer_user_id: str, product_id: int, fingerprint: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM reengagement_alerts WHERE buyer_user_id=? AND product_id=? AND fingerprint=?",
+                (str(buyer_user_id), int(product_id), str(fingerprint)),
+            )
