@@ -6,6 +6,7 @@ class CapabilityRepository:
         "SERVICE_PROVIDER",
         "WORKER",
         "EMPLOYER",
+        "DELIVERY_PARTNER",
     }
 
     def __init__(self, database) -> None:
@@ -54,7 +55,7 @@ class CapabilityRepository:
             (whatsapp_mobile, normalized, source),
         )
 
-    def add_many(self, whatsapp_mobile: str, capabilities, source: str | None = None) -> None:
+    def add_many(self, whatsapp_mobile: str, capabilities, source: str | None = "registration") -> None:
         for capability in capabilities:
             self.add(whatsapp_mobile, capability, source=source)
 
