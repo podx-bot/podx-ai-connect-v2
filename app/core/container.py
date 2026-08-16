@@ -55,6 +55,7 @@ from app.services.universal_rfq_service import UniversalRFQService
 from app.services.universal_targeting_service import UniversalTargetingService
 from app.whatsapp.whatsapp_service import WhatsAppService
 
+
 class AppContainer:
     def __init__(self) -> None:
         self.settings=load_settings(); self.database=Database(self.settings.database_path); self.database.create_tables()
@@ -66,11 +67,28 @@ class AppContainer:
         self.universal_rfq_service=UniversalRFQService(self.universal_rfq_repository); self.event_master_rfq_service=EventMasterRFQService(self.universal_rfq_repository); self.event_master_runtime_service=EventMasterRuntimeService(self.event_master_rfq_service,user_repository=self.user_repository); self.catering_menu_ai_service=CateringMenuAIService(api_key=self.settings.gemini_api_key,catalog_repository=self.catering_catalog_repository,pending_repository=self.catering_menu_pending_repository); self.catering_rfq_runtime_service=CateringRFQRuntimeService(self.catering_catalog_repository,self.universal_rfq_repository,self.universal_rfq_service,self.whatsapp_service,self._resolve_universal_contact,user_repository=self.user_repository)
         self.grocery_rfq_service=GroceryRFQService(self.grocery_rfq_repository); self.grocery_rfq_runtime_service=GroceryRFQRuntimeService(self.grocery_rfq_repository,self.grocery_rfq_service,self.whatsapp_service,self._resolve_universal_contact,user_repository=self.user_repository); self.local_dispatch_runtime_service=LocalDispatchRuntimeService(self.local_dispatch_repository,self.user_repository,self.whatsapp_service,self._resolve_universal_contact); self.grocery_order_runtime_service=GroceryOrderRuntimeService(self.grocery_rfq_repository,self.grocery_order_repository,self.local_dispatch_repository,self._resolve_universal_contact,user_repository=self.user_repository,dispatch_runtime=self.local_dispatch_runtime_service)
         self.conversation_service=UniversalAwareConversationService(response_commands=self.universal_response_command_service,live_capture=self.universal_live_capture_service,image_service=self.universal_image_service,base_conversation=self.base_conversation_service,product_runtime=self.product_buyer_runtime_service,seller_escalation=self.seller_ai_escalation_service,grocery_runtime=self.grocery_rfq_runtime_service,grocery_order_runtime=self.grocery_order_runtime_service,catering_runtime=self.catering_rfq_runtime_service,catering_menu_ai=self.catering_menu_ai_service,event_runtime=self.event_master_runtime_service)
-        self.audio_codec_service=AudioCodecService(); self.voice_assistant_service=SarvamTTSVoiceAssistantService(sarvam_api_key=self.settings.sarvam_api_key,sarvam_model=self.settings.sarvam_stt_model,sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,api_key=self.settings.gemini_api_key,model=self.settings.gemini_voice_model,max_audio_bytes=self.settings.gemini_voice_max_bytes,tts_model=self.settings.gemini_tts_model,tts_voice=self.settings.gemini_tts_voice,voice_reply_max_chars=self.settings.voice_reply_max_chars,transcription_attempts=2,generate_content_attempts=2,audio_codec_service=self.audio_codec_service); self.job_matching_service=JobMatchingService(user_repository=self.user_repository,whatsapp_service=self.whatsapp_service); self.job_lifecycle_service=JobLifecycleService(repository=self.job_lifecycle_repository,whatsapp_service=self.whatsapp_service); self.easy_job_command_service=EasyJobCommandService(repository=self.job_lifecycle_repository,lifecycle_service=self.job_lifecycle_service)
+        self.audio_codec_service=AudioCodecService()
+        self.voice_assistant_service = SarvamTTSVoiceAssistantService(
+            sarvam_api_key=self.settings.sarvam_api_key,
+            sarvam_model=self.settings.sarvam_stt_model,
+            sarvam_timeout_seconds=self.settings.sarvam_stt_timeout_seconds,
+            api_key=self.settings.gemini_api_key,
+            model=self.settings.gemini_voice_model,
+            max_audio_bytes=self.settings.gemini_voice_max_bytes,
+            tts_model=self.settings.gemini_tts_model,
+            tts_voice=self.settings.gemini_tts_voice,
+            voice_reply_max_chars=self.settings.voice_reply_max_chars,
+            transcription_attempts=2,
+            generate_content_attempts=2,
+            audio_codec_service=self.audio_codec_service,
+        )
+        self.job_matching_service=JobMatchingService(user_repository=self.user_repository,whatsapp_service=self.whatsapp_service); self.job_lifecycle_service=JobLifecycleService(repository=self.job_lifecycle_repository,whatsapp_service=self.whatsapp_service); self.easy_job_command_service=EasyJobCommandService(repository=self.job_lifecycle_repository,lifecycle_service=self.job_lifecycle_service)
+
     def _resolve_universal_contact(self,user_id:str):
         user=self.user_repository.find_by_whatsapp_mobile(str(user_id)) or {}
         if not user:return {"mobile":str(user_id),"phone":str(user_id),"name":"PODX User"}
         whatsapp_mobile=str(user.get("whatsapp_mobile") or user_id); entered_mobile=str(user.get("entered_mobile") or whatsapp_mobile); return {**user,"mobile":whatsapp_mobile,"phone":entered_mobile,"whatsapp_mobile":whatsapp_mobile,"name":user.get("name") or "PODX User"}
+
     def _universal_profiles(self):
         profiles=[]; user_rows=self.database.fetchall("SELECT * FROM users WHERE registration_complete = 1"); users={str(row["whatsapp_mobile"]):dict(row) for row in user_rows}
         for mobile,user in users.items():
@@ -83,4 +101,5 @@ class AppContainer:
         for row in provider_rows:
             mobile=str(row["provider_mobile"]); user=users.get(mobile,{}); profiles.append({"user_id":mobile,"role":"SERVICE_PROVIDER","service":row["service_name"],"category":row["service_name"],"latitude":user.get("latitude"),"longitude":user.get("longitude")})
         return profiles
+
     def close(self)->None:self.database.close()
