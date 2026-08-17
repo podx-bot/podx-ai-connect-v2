@@ -1,0 +1,1 @@
+Fix lump-sum quantity gating and reject internal AI schema fields.
