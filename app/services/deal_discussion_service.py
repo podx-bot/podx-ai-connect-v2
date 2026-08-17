@@ -1,0 +1,220 @@
+"""Private deal clarification between matched parties before order/contact actions."""
+from __future__ import annotations
+
+import re
+from typing import Any
+
+
+class DealDiscussionService:
+    def __init__(self, repository, whatsapp_service, contact_resolver) -> None:
+        self.repository = repository
+        self.whatsapp = whatsapp_service
+        self.contact_resolver = contact_resolver
+
+    def _send_buttons_or_text(self, mobile, body, buttons):
+        sender = getattr(self.whatsapp, "send_reply_buttons", None)
+        if callable(sender):
+            return sender(mobile, body, buttons)
+        return self.whatsapp.send_text_message(mobile, body)
+
+    def start(self, request, buyer: str, seller: str):
+        request_id = int(request["id"])
+        seed = {}
+        for key in ("quantity", "unit", "price", "currency", "when_text", "location_text"):
+            if request.get(key) not in (None, ""):
+                seed[key] = request.get(key)
+        self.repository.start(request_id, buyer, seller, seed)
+        buyer_mobile = self._mobile(buyer)
+        seller_mobile = self._mobile(seller)
+        self.whatsapp.send_text_message(
+            buyer_mobile,
+            "✅ Seller available అని confirm చేశారు. ఇప్పుడు PODX rate/quality/quantity వంటి deal details sellerతో clarify చేస్తోంది. Contact details ఇప్పుడే share కావు.",
+        )
+        prompt = self._seller_prompt(request, seed)
+        seller_delivery = self.whatsapp.send_text_message(seller_mobile, prompt)
+        return {"status": "WAITING_SELLER_DETAILS", "request_id": request_id, "notification": seller_delivery}
+
+    def consume_seller_text(self, request, buyer: str, seller: str, text: str):
+        request_id = int(request["id"])
+        deal = self.repository.get(request_id, seller)
+        if not deal or deal.get("status") not in {"WAITING_SELLER_DETAILS", "WAITING_SELLER_REVISION"}:
+            return None
+        parsed = self._parse_details(request, text)
+        missing = self._missing_required(request, {**(deal.get("details") or {}), **parsed}, text)
+        if missing:
+            labels = ", ".join(missing)
+            return f"Deal complete చేయడానికి ఇంకా {labels} చెప్పండి. ఒకే messageలో చెప్పవచ్చు."
+        updated = self.repository.save_seller_details(request_id, seller, parsed, text, revised=deal.get("status") == "WAITING_SELLER_REVISION")
+        buyer_mobile = self._mobile(buyer)
+        summary = self._summary(request, updated)
+        self._send_buttons_or_text(
+            buyer_mobile,
+            summary + "\n\nఈ deal సరేనా? మార్పు కావాలంటే PODX ద్వారా అడగండి.",
+            [
+                {"id": f"DEAL_CONFIRM {request_id} {seller}", "title": "✅ Deal OK"},
+                {"id": f"DEAL_CHANGE {request_id} {seller}", "title": "💬 మార్పు అడగండి"},
+            ],
+        )
+        return "✅ Deal details save చేశాను. Buyerకి summary పంపాను; contact ఇంకా privateగానే ఉంది."
+
+    def ask_for_change(self, request, buyer: str, seller: str):
+        deal = self.repository.get(int(request["id"]), seller)
+        if not deal or deal.get("status") != "WAITING_BUYER_CONFIRM":
+            return "ఈ deal ఇప్పుడు change requestకి readyగా లేదు."
+        self.repository.mark_waiting_buyer_change(int(request["id"]), seller)
+        return "💬 ఏ detail మార్చాలి? ఉదా: rate తగ్గించండి / quality skinless కావాలి / delivery కావాలి. మీ మాటల్లో పంపండి."
+
+    def consume_buyer_change(self, request, buyer: str, seller: str, text: str):
+        request_id = int(request["id"])
+        deal = self.repository.get(request_id, seller)
+        if not deal or deal.get("status") != "WAITING_BUYER_CHANGE":
+            return None
+        updated = self.repository.save_buyer_change(request_id, seller, text)
+        seller_mobile = self._mobile(seller)
+        self.whatsapp.send_text_message(
+            seller_mobile,
+            f"💬 Buyer deal clarification:\n{updated.get('buyer_question') or text}\n\nAgree/updated rate-quality-delivery details మీ మాటల్లో reply చేయండి. PODX buyerకి మాత్రమే relay చేస్తుంది.",
+        )
+        return "✅ మీ clarification sellerకి పంపాను. Seller reply వచ్చిన తర్వాత updated deal summary ఇస్తాను."
+
+    def confirm(self, request, buyer: str, seller: str):
+        request_id = int(request["id"])
+        deal = self.repository.get(request_id, seller)
+        if not deal or str(deal.get("buyer_user_id")) != str(buyer):
+            return {"status": "DEAL_NOT_FOUND"}
+        if deal.get("status") != "WAITING_BUYER_CONFIRM":
+            return {"status": "DEAL_NOT_READY"}
+        deal = self.repository.confirm(request_id, seller)
+        buyer_mobile = self._mobile(buyer)
+        seller_mobile = self._mobile(seller)
+        self.whatsapp.send_text_message(seller_mobile, "✅ Buyer deal summaryని accept చేశారు. Contact ఇంకా share కాలేదు.")
+        result = self._send_buttons_or_text(
+            buyer_mobile,
+            self._summary(request, deal) + "\n\n✅ Deal confirmed. ఇప్పుడు next step ఎంచుకోండి.",
+            [
+                {"id": f"ORDER_CONTINUE {request_id} {seller}", "title": "📦 Order Continue"},
+                {"id": f"DIRECT_TALK {request_id} {seller}", "title": "📞 Direct Talk"},
+            ],
+        )
+        return {"status": "DEAL_CONFIRMED", "notification": result}
+
+    def is_confirmed(self, request_id: int, seller: str) -> bool:
+        deal = self.repository.get(request_id, seller)
+        return bool(deal and deal.get("status") == "CONFIRMED")
+
+    def pending_for_seller(self, seller: str):
+        return self.repository.latest_for_seller(seller, ("WAITING_SELLER_DETAILS", "WAITING_SELLER_REVISION"))
+
+    def pending_for_buyer_change(self, buyer: str):
+        return self.repository.latest_for_buyer(buyer, ("WAITING_BUYER_CHANGE",))
+
+    def pending_for_buyer_summary(self, buyer: str):
+        return self.repository.latest_for_buyer(buyer, ("WAITING_BUYER_CONFIRM",))
+
+    def _mobile(self, user_id: str) -> str:
+        contact = self.contact_resolver(str(user_id)) or {}
+        return str(contact.get("mobile") or contact.get("phone") or user_id)
+
+    @staticmethod
+    def _category(request) -> str:
+        return str(request.get("domain") or "OTHER").upper()
+
+    def _seller_prompt(self, request, seed) -> str:
+        subject = str(request.get("subject") or "item")
+        existing = []
+        if seed.get("quantity") is not None:
+            existing.append(f"Qty {seed['quantity']} {seed.get('unit') or ''}".strip())
+        if seed.get("price") is not None:
+            existing.append(f"existing price/budget ₹{seed['price']}")
+        known = f" ఇప్పటికే: {', '.join(existing)}." if existing else ""
+        category = self._category(request)
+        if category == "PRODUCT":
+            fields = "rate/unit, quality/type/variant, availability, delivery లేదా pickup"
+        elif category in {"SERVICE", "SERVICES"}:
+            fields = "work scope, rate, available date/time, location/visit details"
+        elif category in {"WORK", "WORKERS", "JOB", "JOBS"}:
+            fields = "salary/rate, timing, skill/experience requirement, work location"
+        else:
+            fields = "rate/price, quantity లేదా scope, availability/time, delivery/fulfilment"
+        return f"🤝 PODX Deal Discussion\n{subject}.{known}\nBuyerతో contact share చేసే ముందు {fields} చెప్పండి. ఇప్పటికే ఉన్న detail మళ్లీ చెప్పాల్సిన అవసరం లేదు. ఒకే text/voice replyలో చెప్పవచ్చు."
+
+    @classmethod
+    def _parse_details(cls, request, text: str) -> dict[str, Any]:
+        clean = " ".join(str(text or "").strip().split())
+        low = clean.casefold()
+        result: dict[str, Any] = {"seller_note": clean}
+        price = re.search(r"(?:₹|rs\.?|inr|రూ\.?|రూపాయలు?)\s*(\d+(?:\.\d+)?)", low, re.I)
+        if not price:
+            price = re.search(r"(\d+(?:\.\d+)?)\s*(?:/|per\s+)(kg|kgs|కేజీ|కిలో|piece|pc|hour|day)", low, re.I)
+        if price:
+            result["rate"] = float(price.group(1))
+            if len(price.groups()) > 1 and price.group(2):
+                result["rate_unit"] = price.group(2)
+        qty = re.search(r"(\d+(?:\.\d+)?)\s*(kg|kgs|కేజీ|కిలో|piece|pieces|pcs|units?)\b", low, re.I)
+        if qty and request.get("quantity") is None:
+            result["quantity"] = float(qty.group(1))
+            result["unit"] = qty.group(2)
+        quality_terms = ("fresh", "skinless", "with skin", "whole", "cut", "boneless", "organic", "premium", "grade", "quality", "ఫ్రెష్", "బోన్లెస్", "క్వాలిటీ")
+        found_quality = [term for term in quality_terms if term in low]
+        if found_quality:
+            result["quality"] = ", ".join(found_quality[:4])
+        if any(term in low for term in ("today", "ఈరోజు", "available", "ready", "ఇప్పుడు", "ఉంది")):
+            result["availability"] = "available/today"
+        elif any(term in low for term in ("tomorrow", "రేపు")):
+            result["availability"] = "tomorrow"
+        if "delivery" in low or "డెలివరీ" in low:
+            result["fulfilment"] = "delivery"
+        elif "pickup" in low or "pick up" in low or "పికప్" in low:
+            result["fulfilment"] = "pickup"
+        return result
+
+    def _missing_required(self, request, details, raw_text: str):
+        category = self._category(request)
+        missing = []
+        if category == "PRODUCT":
+            if details.get("quantity") is None and request.get("quantity") is None:
+                missing.append("quantity")
+            if details.get("rate") is None and request.get("price") is None:
+                missing.append("rate/unit")
+            if not details.get("quality"):
+                missing.append("quality/type")
+            if not details.get("fulfilment"):
+                missing.append("delivery/pickup")
+        elif category in {"SERVICE", "SERVICES"}:
+            if details.get("rate") is None and request.get("price") is None:
+                missing.append("rate")
+            if len(str(raw_text or "").strip()) < 8:
+                missing.append("scope/time")
+        elif category in {"WORK", "WORKERS", "JOB", "JOBS"}:
+            if details.get("rate") is None and request.get("price") is None:
+                missing.append("salary/rate")
+            if len(str(raw_text or "").strip()) < 8:
+                missing.append("timing/skill")
+        return missing
+
+    def _summary(self, request, deal) -> str:
+        details = dict(deal.get("details") or {})
+        bits = ["🤝 PODX Deal Summary", f"Item: {request.get('subject') or 'Requirement'}"]
+        quantity = details.get("quantity", request.get("quantity"))
+        unit = details.get("unit", request.get("unit"))
+        if quantity is not None:
+            bits.append(f"Quantity: {quantity} {unit or ''}".strip())
+        rate = details.get("rate")
+        if rate is not None:
+            rate_unit = details.get("rate_unit") or unit or "unit"
+            bits.append(f"Rate: ₹{rate:g} / {rate_unit}")
+        elif request.get("price") is not None:
+            bits.append(f"Price/Budget: ₹{request.get('price')}")
+        if details.get("quality"):
+            bits.append(f"Quality/Type: {details['quality']}")
+        if details.get("availability"):
+            bits.append(f"Availability: {details['availability']}")
+        if details.get("fulfilment"):
+            bits.append(f"Fulfilment: {details['fulfilment']}")
+        note = str(deal.get("seller_note") or details.get("seller_note") or "").strip()
+        if note:
+            bits.append(f"Seller note: {note}")
+        if deal.get("buyer_question"):
+            bits.append(f"Buyer clarification: {deal['buyer_question']}")
+        bits.append("🔒 Phone numbers ఇంకా share కాలేదు.")
+        return "\n".join(bits)
