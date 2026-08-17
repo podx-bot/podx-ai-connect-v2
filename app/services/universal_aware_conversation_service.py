@@ -216,6 +216,22 @@ class UniversalAwareConversationService:
         except Exception:
             return None
 
+    def _same_product_context(self, request: dict, message: str) -> bool:
+        """Keep legacy matched-product FAQ answers scoped to the active subject."""
+        same_context = getattr(self.response_commands, "_same_deal_context", None)
+        if callable(same_context):
+            try:
+                return bool(same_context(request, message))
+            except Exception:
+                pass
+        router = getattr(self.product_runtime, "context_router", None)
+        if router is not None:
+            try:
+                return not bool(router.introduces_new_subject(request, message))
+            except Exception:
+                pass
+        return True
+
     def _matched_product_faq(self, sender_mobile: str, message: str) -> str | None:
         lowered = message.casefold()
         repo = getattr(self.response_commands, "notification_repository", None)
@@ -232,6 +248,8 @@ class UniversalAwareConversationService:
             return None
         request = demands.get(int(interest["request_id"]))
         if not request or str(request.get("domain") or "").upper() != "PRODUCT":
+            return None
+        if not self._same_product_context(request, message):
             return None
 
         recovered = self._recover_accepted_deal(sender_mobile, message, interest, request)
