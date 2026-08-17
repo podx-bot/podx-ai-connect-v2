@@ -76,8 +76,6 @@ class UniversalResponseCommandService:
         if explicit_decline:
             return self._legacy_consent_for_request(sender_mobile, int(explicit_decline.group(1)), False)
 
-        # Deal discussion has priority over generic capture. The parties stay private
-        # until the buyer accepts a seller-confirmed deal summary.
         if self.deals is not None and not self._looks_like_command(text):
             seller_deal = self.deals.pending_for_seller(sender_mobile)
             if seller_deal:
@@ -240,12 +238,38 @@ class UniversalResponseCommandService:
             return "ఈ deal details దొరకలేదు."
         return self.deals.ask_for_change(request, buyer, seller)
 
+    def _request_with_confirmed_deal(self, request: dict, seller: str) -> dict:
+        enriched = dict(request)
+        if self.deals is None:
+            return enriched
+        try:
+            deal = self.deals.repository.get(int(request["id"]), str(seller))
+        except Exception:
+            return enriched
+        if not deal or deal.get("status") != "CONFIRMED":
+            return enriched
+        details = dict(deal.get("details") or {})
+        rate = details.get("rate")
+        if rate is not None:
+            enriched["deal_rate"] = rate
+            enriched["deal_rate_unit"] = details.get("rate_unit") or details.get("unit") or request.get("unit")
+            if str(enriched.get("side") or "").upper() == "OFFER" and enriched.get("price") is None:
+                enriched["price"] = rate
+        for key in ("quality", "availability", "fulfilment"):
+            if details.get(key) not in (None, ""):
+                enriched[f"deal_{key}"] = details[key]
+        if enriched.get("quantity") is None and details.get("quantity") is not None:
+            enriched["quantity"] = details.get("quantity")
+            enriched["unit"] = details.get("unit") or enriched.get("unit")
+        return enriched
+
     def _start_order(self, buyer: str, request_id: int, seller: str) -> str:
         request = self.demands.get(request_id)
         if not request:
             return "ఆ PODX request దొరకలేదు."
         if self.deals is not None and not self.deals.is_confirmed(request_id, seller):
             return "🤝 ముందుగా rate/quality/quantity deal discussion complete చేసి Deal OK confirm చేయాలి. అప్పటి వరకు order continue కాదు."
+        request = self._request_with_confirmed_deal(request, seller)
         status = self.notifications.start_order(request, buyer, seller).get("status")
         if status == "WAITING_BUYER_ADDRESS":
             return "📍 Order continue చేస్తున్నాను. మీ delivery address పంపండి."
@@ -259,6 +283,7 @@ class UniversalResponseCommandService:
         request = self.demands.get(request_id)
         if not request:
             return "ఆ PODX request దొరకలేదు."
+        request = self._request_with_confirmed_deal(request, seller)
         status = self.notifications.qualify_lead(request, buyer, seller, address).get("status")
         if status == "ADDRESS_TOO_SHORT":
             return "Delivery address ఇంకొంచెం పూర్తి వివరంగా పంపండి — House/Street, Area, Town, Pincode."
@@ -272,6 +297,7 @@ class UniversalResponseCommandService:
         request = self.demands.get(request_id)
         if not request:
             return "ఆ PODX request దొరకలేదు."
+        request = self._request_with_confirmed_deal(request, seller)
         status = self.notifications.final_confirm(request, buyer, seller, accepted).get("status")
         if status == "CONVERTED":
             return "✅ Order Confirmed. Sellerకి final confirmed order పంపాను."
