@@ -30,6 +30,11 @@ class UniversalContextRouter:
         "bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes",
         "piece", "pieces", "pc", "pcs", "unit", "units",
     }
+    QUESTION_MARKERS = (
+        "?", "how", "what", "which", "why", "when", "where", "price?", "rate?",
+        "ఎంత", "ఏంటి", "ఏమిటి", "ఉందా", "దొరుకుతుందా", "కావాలా", "కొనాలా",
+        "क्या", "कितना", "कौन", "कहाँ", "कब", "कैसे",
+    )
 
     def __init__(
         self,
@@ -48,8 +53,6 @@ class UniversalContextRouter:
     def _subject_is_mentioned(subject_tokens: set[str], message_tokens: set[str]) -> bool:
         if subject_tokens & message_tokens:
             return True
-        # Handles natural compound variants such as "sonarice" for subject
-        # "rice" without creating product-specific aliases.
         return any(
             subject in message or message in subject
             for subject in subject_tokens
@@ -57,13 +60,13 @@ class UniversalContextRouter:
             if len(subject) >= 4 and len(message) >= 4
         )
 
-    def introduces_new_subject(self, request: dict[str, Any], text: str) -> bool:
-        """Return True when a message is semantically a new subject/request.
+    @classmethod
+    def _looks_like_question(cls, text: str) -> bool:
+        lowered = str(text or "").casefold()
+        return any(marker in lowered for marker in cls.QUESTION_MARKERS)
 
-        The AI hook may return a bool, or a mapping containing
-        ``new_subject`` / ``same_context``. Any provider error falls back to a
-        conservative generic lexical check; no product names are hard-coded.
-        """
+    def introduces_new_subject(self, request: dict[str, Any], text: str) -> bool:
+        """Return True when a message is semantically a new subject/request."""
         if callable(self.semantic_classifier):
             try:
                 verdict = self.semantic_classifier(dict(request or {}), str(text or ""))
@@ -86,15 +89,17 @@ class UniversalContextRouter:
         if self._subject_is_mentioned(subject_tokens, message_tokens):
             return False
 
+        # A product-detail question such as "motor warranty ఎంత?" should stay
+        # attached to the current matched product even if the question contains
+        # an attribute noun that is not present in the product title. New listing
+        # or request assertions continue through the generic subject detector.
+        if self._looks_like_question(raw_text):
+            return False
+
         candidates = message_tokens - self.DETAIL_WORDS
         if not candidates:
             return False
 
-        # The fallback must be conservative: one unknown descriptor such as
-        # "skinless" should not break an active deal. Two or more meaningful
-        # unknown tokens are strong evidence that a different free-form subject
-        # was introduced. A single candidate also counts when it is paired with
-        # an explicit package/count construction such as "5 kg rice bag".
         if len(candidates) >= 2:
             return True
 
