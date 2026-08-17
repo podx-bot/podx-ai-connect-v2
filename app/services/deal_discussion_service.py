@@ -28,7 +28,7 @@ class DealDiscussionService:
         seller_mobile = self._mobile(seller)
         self.whatsapp.send_text_message(
             buyer_mobile,
-            "✅ Seller available అని confirm చేశారు. ఇప్పుడు PODX rate/quality/quantity వంటి deal details sellerతో clarify చేస్తోంది. Contact details ఇప్పుడే share కావు.",
+            "✅ Seller available అని confirm చేశారు. ఇప్పుడు PODX deal details sellerతో clarify చేస్తోంది. Contact details ఇప్పుడే share కావు.",
         )
         prompt = self._seller_prompt(request, seed)
         seller_delivery = self.whatsapp.send_text_message(seller_mobile, prompt)
@@ -44,7 +44,7 @@ class DealDiscussionService:
         missing = self._missing_required(request, merged, text)
         if missing:
             labels = ", ".join(missing)
-            return f"Deal complete చేయడానికి ఇంకా {labels} చెప్పండి. ఒకే messageలో చెప్పవచ్చు."
+            return f"Deal complete చేయడానికి ఇంకా {labels} చెప్పండి. ఇప్పటికే చెప్పిన details మళ్లీ అవసరం లేదు."
         updated = self.repository.save_seller_details(
             request_id,
             seller,
@@ -73,7 +73,7 @@ class DealDiscussionService:
         }:
             return "ఈ deal ఇప్పుడు change requestకి readyగా లేదు."
         self.repository.mark_waiting_buyer_change(int(request["id"]), seller)
-        return "💬 ఏ detail మార్చాలి? ఉదా: rate తగ్గించండి / quality skinless కావాలి / delivery కావాలి. మీ మాటల్లో పంపండి."
+        return "💬 ఏ detail మార్చాలి? ఉదా: rate తగ్గించండి / variant మార్చండి / delivery కావాలి. మీ మాటల్లో పంపండి."
 
     def consume_buyer_change(self, request, buyer: str, seller: str, text: str):
         request_id = int(request["id"])
@@ -142,8 +142,16 @@ class DealDiscussionService:
         value = str(unit or "").strip().casefold()
         if value in {"kg", "kgs", "kilogram", "kilograms", "కేజీ", "కేజీలు", "కిలో", "కిలోలు"}:
             return "kg"
+        if value in {"g", "gm", "gms", "gram", "grams"}:
+            return "g"
+        if value in {"l", "ltr", "litre", "litres", "liter", "liters"}:
+            return "l"
+        if value in {"ml", "millilitre", "millilitres", "milliliter", "milliliters"}:
+            return "ml"
         if value in {"piece", "pieces", "pc", "pcs", "unit", "units"}:
             return "piece"
+        if value in {"bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes"}:
+            return value.rstrip("s")
         if value in {"hour", "hours", "hr", "hrs"}:
             return "hour"
         if value in {"day", "days"}:
@@ -160,13 +168,13 @@ class DealDiscussionService:
         known = f" ఇప్పటికే: {', '.join(existing)}." if existing else ""
         category = self._category(request)
         if category == "PRODUCT":
-            fields = "rate/unit, quality/type/variant, availability, delivery లేదా pickup"
+            fields = "price/rate, type/variant/size (ఉంటే), availability, delivery/pickup"
         elif category in {"SERVICE", "SERVICES"}:
             fields = "work scope, rate, available date/time, location/visit details"
         elif category in {"WORK", "WORKERS", "JOB", "JOBS"}:
             fields = "salary/rate, timing, skill/experience requirement, work location"
         else:
-            fields = "rate/price, quantity లేదా scope, availability/time, delivery/fulfilment"
+            fields = "price/rate, quantity లేదా scope, availability/time, delivery/fulfilment"
         return f"🤝 PODX Deal Discussion\n{subject}.{known}\nBuyerతో contact share చేసే ముందు {fields} చెప్పండి. ఇప్పటికే ఉన్న detail మళ్లీ చెప్పాల్సిన అవసరం లేదు. ఒకే text/voice replyలో చెప్పవచ్చు."
 
     @classmethod
@@ -175,43 +183,63 @@ class DealDiscussionService:
         low = clean.casefold()
         result: dict[str, Any] = {"seller_note": clean}
 
+        unit_words = r"kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|g|gm|gms|grams?|l|ltr|litres?|liters?|ml|pieces?|pc|pcs|units?|bags?|packs?|packets?|boxes?|hours?|hrs?|days?"
+
+        # Universal quantity: 5 kg, 2 bags, 10 pcs, 1 litre, etc.
+        qty = re.search(rf"(\d+(?:\.\d+)?)\s*({unit_words})", low, re.I)
+        if qty:
+            result["quantity"] = float(qty.group(1))
+            result["unit"] = cls._normalize_unit(qty.group(2))
+
+        # Universal price: ₹300, rs 300, 300 rs, 300rs, INR 300, 300 per kg.
         price = re.search(r"(?:₹|rs\.?|inr|రూ\.?|రూపాయలు?)\s*(\d+(?:\.\d+)?)", low, re.I)
         if not price:
-            price = re.search(
-                r"(\d+(?:\.\d+)?)\s*(?:/|per\s+)(kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|piece|pieces|pc|pcs|hour|hours|day|days)",
-                low,
-                re.I,
-            )
+            price = re.search(r"(\d+(?:\.\d+)?)\s*(?:rs\.?|inr|రూ\.?|రూపాయలు?)", low, re.I)
+        if not price:
+            price = re.search(rf"(\d+(?:\.\d+)?)\s*(?:/|per\s+)({unit_words})", low, re.I)
         if price:
             result["rate"] = float(price.group(1))
             if len(price.groups()) > 1 and price.group(2):
                 result["rate_unit"] = cls._normalize_unit(price.group(2))
             else:
-                unit_match = re.search(
-                    r"(?:/|per\s+)(kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|piece|pieces|pc|pcs|hour|hours|day|days)",
-                    low,
-                    re.I,
-                )
+                unit_match = re.search(rf"(?:/|per\s+)({unit_words})", low, re.I)
                 if unit_match:
                     result["rate_unit"] = cls._normalize_unit(unit_match.group(1))
+                elif re.search(r"\b(?:bag|pack|packet|box)\b", low):
+                    pack_match = re.search(r"\b(bag|pack|packet|box)\b", low)
+                    if pack_match:
+                        result["rate_unit"] = cls._normalize_unit(pack_match.group(1))
 
-        qty = re.search(
-            r"(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|కేజీలు|కేజీ|కిలోలు|కిలో|piece|pieces|pcs|units?)",
-            low,
-            re.I,
-        )
-        if qty and request.get("quantity") is None:
-            result["quantity"] = float(qty.group(1))
-            result["unit"] = cls._normalize_unit(qty.group(2))
+        # Type/quality/variant is open-ended. Prefer explicit labels, then common descriptive words.
+        labelled = re.search(r"(?:quality|type|variant|brand|model|size)\s*[:=-]?\s*([\w\- ]{2,40})", low, re.I)
+        if labelled:
+            value = re.split(r"\b(?:delivery|pickup|available|today|tomorrow|rs|inr)\b", labelled.group(1), maxsplit=1)[0].strip(" ,.-")
+            if value:
+                result["quality"] = value
+        else:
+            quality_terms = (
+                "fresh", "skinless", "with skin", "whole", "cut", "boneless", "organic", "premium",
+                "grade", "new", "used", "sealed", "original", "small", "medium", "large", "xl", "xxl",
+                "ఫ్రెష్", "బోన్లెస్", "క్వాలిటీ", "మంచి క్వాలిటీ",
+            )
+            found_quality = [term for term in quality_terms if term in low]
+            if found_quality:
+                result["quality"] = ", ".join(found_quality[:4])
+            else:
+                # Preserve free-form variant tokens such as "sona rice" / "sonarice" without product-specific rules.
+                words = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", low)
+                stop = {
+                    "only", "pickup", "delivery", "available", "today", "tomorrow", "price", "rate",
+                    "per", "bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes",
+                    "kg", "kgs", "gram", "grams", "piece", "pieces", "unit", "units", "need", "want",
+                    "have", "sell", "selling", "buy", "buying",
+                }
+                subject_words = set(re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", str(request.get("subject") or "").casefold()))
+                candidates = [w for w in words if w not in stop and w not in subject_words and not w.isdigit()]
+                if candidates:
+                    result["quality"] = " ".join(candidates[-3:])
 
-        quality_terms = (
-            "fresh", "skinless", "with skin", "whole", "cut", "boneless", "organic", "premium",
-            "grade", "quality", "ఫ్రెష్", "బోన్లెస్", "క్వాలిటీ", "మంచి క్వాలిటీ",
-        )
-        found_quality = [term for term in quality_terms if term in low]
-        if found_quality:
-            result["quality"] = ", ".join(found_quality[:4])
-        if any(term in low for term in ("today", "ఈరోజు", "available", "ready", "ఇప్పుడు", "ఉంది")):
+        if any(term in low for term in ("today", "ఈరోజు", "available", "ready", "ఇప్పుడు", "ఉంది", "stock")):
             result["availability"] = "available/today"
         elif any(term in low for term in ("tomorrow", "రేపు")):
             result["availability"] = "tomorrow"
@@ -228,9 +256,7 @@ class DealDiscussionService:
             if details.get("quantity") is None and request.get("quantity") is None:
                 missing.append("quantity")
             if details.get("rate") is None and request.get("price") is None:
-                missing.append("rate/unit")
-            if not details.get("quality"):
-                missing.append("quality/type")
+                missing.append("price/rate")
             if not details.get("fulfilment"):
                 missing.append("delivery/pickup")
         elif category in {"SERVICE", "SERVICES"}:
