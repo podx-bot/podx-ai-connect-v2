@@ -97,15 +97,26 @@ class DealDiscussionRepository:
                 (self._now(), int(request_id), str(seller)),
             )
 
-    def save_buyer_change(self, request_id, seller, question):
+    def save_buyer_change(self, request_id, seller, question, details=None):
+        current = self.get(request_id, seller)
+        if not current:
+            return None
+        merged = dict(current.get("details") or {})
+        merged.update({k: v for k, v in (details or {}).items() if v not in (None, "")})
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE universal_deal_discussions
-                SET status='WAITING_SELLER_REVISION',buyer_question=?,updated_at=?
+                SET status='WAITING_SELLER_REVISION',buyer_question=?,details_json=?,updated_at=?
                 WHERE request_id=? AND seller_user_id=?
                 """,
-                (str(question or "").strip(), self._now(), int(request_id), str(seller)),
+                (
+                    str(question or "").strip(),
+                    json.dumps(merged, ensure_ascii=False),
+                    self._now(),
+                    int(request_id),
+                    str(seller),
+                ),
             )
         return self.get(request_id, seller)
 

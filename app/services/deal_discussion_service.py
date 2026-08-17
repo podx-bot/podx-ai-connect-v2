@@ -40,11 +40,18 @@ class DealDiscussionService:
         if not deal or deal.get("status") not in {"WAITING_SELLER_DETAILS", "WAITING_SELLER_REVISION"}:
             return None
         parsed = self._parse_details(request, text)
-        missing = self._missing_required(request, {**(deal.get("details") or {}), **parsed}, text)
+        merged = {**(deal.get("details") or {}), **parsed}
+        missing = self._missing_required(request, merged, text)
         if missing:
             labels = ", ".join(missing)
             return f"Deal complete చేయడానికి ఇంకా {labels} చెప్పండి. ఒకే messageలో చెప్పవచ్చు."
-        updated = self.repository.save_seller_details(request_id, seller, parsed, text, revised=deal.get("status") == "WAITING_SELLER_REVISION")
+        updated = self.repository.save_seller_details(
+            request_id,
+            seller,
+            parsed,
+            text,
+            revised=deal.get("status") == "WAITING_SELLER_REVISION",
+        )
         buyer_mobile = self._mobile(buyer)
         summary = self._summary(request, updated)
         self._send_buttons_or_text(
@@ -73,7 +80,11 @@ class DealDiscussionService:
         deal = self.repository.get(request_id, seller)
         if not deal or deal.get("status") != "WAITING_BUYER_CHANGE":
             return None
-        updated = self.repository.save_buyer_change(request_id, seller, text)
+        parsed = self._parse_details(request, text)
+        parsed.pop("seller_note", None)
+        parsed.pop("rate", None)
+        parsed.pop("rate_unit", None)
+        updated = self.repository.save_buyer_change(request_id, seller, text, details=parsed)
         seller_mobile = self._mobile(seller)
         self.whatsapp.send_text_message(
             seller_mobile,
@@ -126,6 +137,19 @@ class DealDiscussionService:
     def _category(request) -> str:
         return str(request.get("domain") or "OTHER").upper()
 
+    @staticmethod
+    def _normalize_unit(unit: Any) -> str:
+        value = str(unit or "").strip().casefold()
+        if value in {"kg", "kgs", "kilogram", "kilograms", "కేజీ", "కేజీలు", "కిలో", "కిలోలు"}:
+            return "kg"
+        if value in {"piece", "pieces", "pc", "pcs", "unit", "units"}:
+            return "piece"
+        if value in {"hour", "hours", "hr", "hrs"}:
+            return "hour"
+        if value in {"day", "days"}:
+            return "day"
+        return value
+
     def _seller_prompt(self, request, seed) -> str:
         subject = str(request.get("subject") or "item")
         existing = []
@@ -150,18 +174,40 @@ class DealDiscussionService:
         clean = " ".join(str(text or "").strip().split())
         low = clean.casefold()
         result: dict[str, Any] = {"seller_note": clean}
+
         price = re.search(r"(?:₹|rs\.?|inr|రూ\.?|రూపాయలు?)\s*(\d+(?:\.\d+)?)", low, re.I)
         if not price:
-            price = re.search(r"(\d+(?:\.\d+)?)\s*(?:/|per\s+)(kg|kgs|కేజీ|కిలో|piece|pc|hour|day)", low, re.I)
+            price = re.search(
+                r"(\d+(?:\.\d+)?)\s*(?:/|per\s+)(kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|piece|pieces|pc|pcs|hour|hours|day|days)",
+                low,
+                re.I,
+            )
         if price:
             result["rate"] = float(price.group(1))
             if len(price.groups()) > 1 and price.group(2):
-                result["rate_unit"] = price.group(2)
-        qty = re.search(r"(\d+(?:\.\d+)?)\s*(kg|kgs|కేజీ|కిలో|piece|pieces|pcs|units?)\b", low, re.I)
+                result["rate_unit"] = cls._normalize_unit(price.group(2))
+            else:
+                unit_match = re.search(
+                    r"(?:/|per\s+)(kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|piece|pieces|pc|pcs|hour|hours|day|days)",
+                    low,
+                    re.I,
+                )
+                if unit_match:
+                    result["rate_unit"] = cls._normalize_unit(unit_match.group(1))
+
+        qty = re.search(
+            r"(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|కేజీలు|కేజీ|కిలోలు|కిలో|piece|pieces|pcs|units?)",
+            low,
+            re.I,
+        )
         if qty and request.get("quantity") is None:
             result["quantity"] = float(qty.group(1))
-            result["unit"] = qty.group(2)
-        quality_terms = ("fresh", "skinless", "with skin", "whole", "cut", "boneless", "organic", "premium", "grade", "quality", "ఫ్రెష్", "బోన్లెస్", "క్వాలిటీ")
+            result["unit"] = cls._normalize_unit(qty.group(2))
+
+        quality_terms = (
+            "fresh", "skinless", "with skin", "whole", "cut", "boneless", "organic", "premium",
+            "grade", "quality", "ఫ్రెష్", "బోన్లెస్", "క్వాలిటీ", "మంచి క్వాలిటీ",
+        )
         found_quality = [term for term in quality_terms if term in low]
         if found_quality:
             result["quality"] = ", ".join(found_quality[:4])
@@ -203,15 +249,21 @@ class DealDiscussionService:
         details = dict(deal.get("details") or {})
         bits = ["🤝 PODX Deal Summary", f"Item: {request.get('subject') or 'Requirement'}"]
         quantity = details.get("quantity", request.get("quantity"))
-        unit = details.get("unit", request.get("unit"))
+        unit = self._normalize_unit(details.get("unit", request.get("unit")))
         if quantity is not None:
-            bits.append(f"Quantity: {quantity} {unit or ''}".strip())
+            bits.append(f"Quantity: {quantity:g} {unit or ''}".strip() if isinstance(quantity, float) else f"Quantity: {quantity} {unit or ''}".strip())
         rate = details.get("rate")
+        rate_unit = self._normalize_unit(details.get("rate_unit") or unit)
         if rate is not None:
-            rate_unit = details.get("rate_unit") or unit or "unit"
-            bits.append(f"Rate: ₹{rate:g} / {rate_unit}")
+            bits.append(f"Rate: ₹{rate:g} / {rate_unit or 'unit'}")
         elif request.get("price") is not None:
             bits.append(f"Price/Budget: ₹{request.get('price')}")
+        if quantity is not None and rate is not None and unit and rate_unit and unit == rate_unit:
+            try:
+                total = float(quantity) * float(rate)
+                bits.append(f"Total: ₹{total:,.0f}" if total.is_integer() else f"Total: ₹{total:,.2f}")
+            except (TypeError, ValueError):
+                pass
         if details.get("quality"):
             bits.append(f"Quality/Type: {details['quality']}")
         if details.get("availability"):
