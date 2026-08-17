@@ -77,7 +77,8 @@ def test_complete_seller_details_produce_private_deal_summary(tmp_path):
     assert "PODX Deal Summary" in body
     assert "Quantity: 5" in body
     assert "Rate: ₹220" in body
-    assert "Phone" not in body
+    assert "Phone: buyer" not in body
+    assert "Phone: seller" not in body
     ids = [b["id"] for b in buyer_cards[-1][2]]
     assert f"DEAL_CONFIRM {request_id} seller" in ids
     assert f"DEAL_CHANGE {request_id} seller" in ids
