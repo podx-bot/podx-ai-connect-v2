@@ -60,7 +60,7 @@ def test_existing_quantity_is_reused_and_missing_fields_are_requested(tmp_path):
 
     reply = commands.process_text("seller", "fresh chicken available today")
 
-    assert "rate/unit" in reply
+    assert "price/rate" in reply
     assert "quantity" not in reply.lower()
 
 
