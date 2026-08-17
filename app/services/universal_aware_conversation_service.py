@@ -189,6 +189,13 @@ class UniversalAwareConversationService:
         """Bridge matches accepted before Deal Discussion existed into the new state machine."""
         if str(interest.get("requester_status") or "").upper() != "ACCEPTED":
             return None
+        same_context = getattr(self.response_commands, "_same_deal_context", None)
+        if callable(same_context):
+            try:
+                if not same_context(request, message):
+                    return None
+            except Exception:
+                pass
         if not getattr(self.response_commands, "_looks_like_deal_change", lambda _text: False)(message):
             return None
         deals = getattr(self.response_commands, "deals", None)
