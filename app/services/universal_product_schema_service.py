@@ -49,6 +49,33 @@ class UniversalProductSchemaService:
         "test", "testing", "debug", "internal", "temp", "temporary", "mock",
         "sample", "placeholder", "dummy", "example", "dev", "qa",
     )
+    SEMANTIC_FIELD_GROUPS = {
+        "model": {
+            "model", "model_number", "exact_model", "exact_model_number",
+            "model_no", "model_code", "product_model", "model_or_variant",
+        },
+        "condition": {
+            "condition", "condition_details", "item_condition", "product_condition",
+            "condition_or_quality", "quality_condition", "state_condition",
+        },
+        "working_status": {
+            "working_status", "functionality_status", "functional_status",
+            "function_status", "working_condition", "operational_status",
+            "working", "functionality",
+        },
+        "accessories": {
+            "accessories", "included_accessories", "included_items", "box_contents",
+            "in_the_box", "included_parts", "included_components",
+        },
+        "brand": {"brand", "brand_name", "make", "manufacturer_brand"},
+        "screen_size": {"screen_size", "display_size", "screen_dimension"},
+        "availability": {"availability", "available", "stock_status", "availability_status"},
+        "fulfilment": {
+            "fulfilment", "fulfillment", "delivery_or_pickup", "delivery_pickup",
+            "delivery_mode", "fulfilment_mode", "fulfillment_mode",
+        },
+        "warranty": {"warranty", "warranty_details", "warranty_status", "warranty_period"},
+    }
 
     def __init__(
         self,
@@ -129,7 +156,6 @@ class UniversalProductSchemaService:
                     cleaned_attrs[k] = v
             if cleaned_attrs:
                 result["attributes"] = cleaned_attrs
-                # Keep legacy summary compatibility while preserving structure.
                 result["quality"] = ", ".join(
                     f"{k}: {v}" for k, v in list(cleaned_attrs.items())[:5]
                 )
@@ -140,7 +166,6 @@ class UniversalProductSchemaService:
         if not value:
             return False
         schema = self.schema_for(subject)
-        # Low-confidence fallback must never reject a legitimate user unit.
         if float(schema.get("confidence") or 0.0) < 0.5:
             return True
         allowed = {self._clean_token(item) for item in schema.get("valid_units") or []}
@@ -153,34 +178,30 @@ class UniversalProductSchemaService:
         has_price = details.get("rate") not in (None, "") or details.get("price") not in (None, "")
         has_rate_unit = details.get("rate_unit") not in (None, "")
 
-        # A quoted price without a per-unit marker is a whole-deal/lump-sum price.
-        # Do not block the deal by forcing quantity in that case. If the buyer
-        # already requested a quantity it is present in ``details``; if the seller
-        # explicitly quotes a per-unit rate, quantity remains commercially useful.
         if schema.get("quantity_required") and not has_quantity and (not has_price or has_rate_unit):
             missing.append("quantity")
         if schema.get("price_required") and not has_price:
             missing.append("price")
 
         attributes = details.get("attributes") if isinstance(details.get("attributes"), dict) else {}
-        normalized_attrs = {
-            self._clean_token(key).replace(" ", "_"): value
-            for key, value in attributes.items()
-        }
+        present_canonical: set[str] = set()
+        for key, value in details.items():
+            if key == "attributes" or value in (None, ""):
+                continue
+            present_canonical.add(self._canonical_field_name(key))
+        for key, value in attributes.items():
+            if value not in (None, ""):
+                present_canonical.add(self._canonical_field_name(key))
+
         for field in schema.get("seller_fields") or []:
             if not self._is_safe_field_name(field):
                 continue
-            key = self._clean_token(field).replace(" ", "_")
-            if key in {"price", "rate", "quantity"}:
+            canonical = self._canonical_field_name(field)
+            if canonical in {"price", "rate", "quantity"}:
                 continue
-            if key in {"delivery_or_pickup", "fulfilment", "fulfillment"}:
-                present = details.get("fulfilment") not in (None, "")
-            elif key in {"availability", "available"}:
-                present = details.get("availability") not in (None, "")
-            else:
-                present = details.get(key) not in (None, "") or normalized_attrs.get(key) not in (None, "")
-            if not present:
-                missing.append(field)
+            if canonical in present_canonical:
+                continue
+            missing.append(field)
         return list(dict.fromkeys(missing))
 
     @classmethod
@@ -244,7 +265,8 @@ class UniversalProductSchemaService:
             "Return exactly one JSON object. Choose only commercially sensible TRANSACTION units and fields. valid_units means units used to buy/sell quantity "
             "(piece, bag, kg, litre, pack, metre, etc.), never specification units such as screen inches, Hz, watts, storage GB or dimensions. "
             "Never suggest nonsensical units (for example litres for solid construction material, kilograms for a television). Do not invent regulatory claims. "
-            "Never output test/debug/internal/temp/mock/sample/placeholder fields. For normally singular durable items sold at one quoted total price, quantity_required should be false.\n"
+            "Never output test/debug/internal/temp/mock/sample/placeholder fields. Prefer stable common field names such as model, condition, working_status, included_accessories, brand, screen_size, warranty, availability and delivery_or_pickup instead of inventing synonyms. "
+            "For normally singular durable items sold at one quoted total price, quantity_required should be false.\n"
             "Schema: {\"valid_units\":[string],\"key_attributes\":[string],\"optional_attributes\":[string],"
             "\"buyer_questions\":[string],\"seller_fields\":[string],\"quantity_required\":bool,\"price_required\":bool,\"confidence\":0..1}.\n"
             "seller_fields should contain only details genuinely useful to finish a local buyer-seller deal; use delivery_or_pickup for fulfilment.\n"
@@ -256,7 +278,8 @@ class UniversalProductSchemaService:
         return (
             "You are PODX Deal Detail Extractor. Extract only facts explicitly stated by the seller. Return exactly JSON and no markdown. "
             "Do not infer missing values. A standalone quoted price is the total/lump-sum item price unless the seller explicitly says per/unit. "
-            "Use a valid transaction unit only when the text states one. Put product-specific facts under attributes. Never create test/debug/internal/placeholder attributes.\n"
+            "Use a valid transaction unit only when the text states one. Put product-specific facts under attributes. Never create test/debug/internal/placeholder attributes. "
+            "Prefer stable common attribute names such as model, condition, working_status, included_accessories, brand, screen_size and warranty rather than new synonyms.\n"
             "Schema: {\"quantity\":number|null,\"unit\":string|null,\"rate\":number|null,\"rate_unit\":string|null,"
             "\"availability\":string|null,\"fulfilment\":\"delivery|pickup\"|null,\"attributes\":{string:string}}\n"
             f"Product: {subject}\nProduct schema: {json.dumps(schema, ensure_ascii=False)}\nSeller message: {text}"
@@ -292,6 +315,15 @@ class UniversalProductSchemaService:
             for part in parts
             for prefix in cls.RESERVED_FIELD_PREFIXES
         )
+
+    @classmethod
+    def _canonical_field_name(cls, value: Any) -> str:
+        token = cls._clean_token(value).replace("-", "_").replace(" ", "_")
+        token = re.sub(r"_+", "_", token).strip("_")
+        for canonical, aliases in cls.SEMANTIC_FIELD_GROUPS.items():
+            if token == canonical or token in aliases:
+                return canonical
+        return token
 
     @staticmethod
     def _clean_token(value: Any) -> str:
