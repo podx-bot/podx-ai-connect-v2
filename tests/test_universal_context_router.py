@@ -18,6 +18,13 @@ def test_attribute_only_followup_stays_in_current_deal():
     assert router.introduces_new_subject(chicken, "fresh skinless chicken ₹220 per kg delivery") is False
 
 
+def test_compound_variant_containing_subject_stays_in_same_context():
+    router = UniversalContextRouter()
+    rice = {"subject": "rice", "domain": "PRODUCT"}
+
+    assert router.introduces_new_subject(rice, "sonarice 300rs pickup") is False
+
+
 def test_ai_semantic_classifier_is_source_of_truth_when_available():
     router = UniversalContextRouter(
         semantic_classifier=lambda request, text: {"new_subject": True}
