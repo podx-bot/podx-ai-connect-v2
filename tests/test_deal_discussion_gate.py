@@ -115,6 +115,24 @@ def test_buyer_change_is_relayed_and_seller_revision_returns_updated_summary(tmp
     assert "Buyer clarification" in body
 
 
+def test_freeform_buyer_question_relays_while_waiting_for_seller_details(tmp_path):
+    _, _, whatsapp, commands, request_id = _build(tmp_path)
+    commands.process_text("seller", f"SELLER_CONFIRM {request_id} buyer")
+
+    buyer_reply = commands.process_text("buyer", "5 కేజీలు కావాలి, మంచి క్వాలిటీ కావాలి. రేట్ ఎంత?")
+
+    assert "sellerకి పంపాను" in buyer_reply
+    seller_messages = [msg for to, msg in whatsapp.sent if to == "seller"]
+    assert any("Buyer deal clarification" in msg and "రేట్ ఎంత" in msg for msg in seller_messages)
+    assert not any("Phone:" in msg for msg in seller_messages)
+
+    seller_reply = commands.process_text("seller", "₹220 per kg fresh skinless available today delivery")
+    assert "Buyerకి summary" in seller_reply
+    body = [body for to, body, _ in whatsapp.buttons if to == "buyer"][-1]
+    assert "Rate: ₹220" in body
+    assert "Buyer clarification" in body
+
+
 def test_deal_ok_unlocks_next_options_then_direct_talk_shares_contacts(tmp_path):
     _, _, whatsapp, commands, request_id = _build(tmp_path)
     commands.process_text("seller", f"SELLER_CONFIRM {request_id} buyer")

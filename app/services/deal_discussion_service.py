@@ -59,7 +59,11 @@ class DealDiscussionService:
 
     def ask_for_change(self, request, buyer: str, seller: str):
         deal = self.repository.get(int(request["id"]), seller)
-        if not deal or deal.get("status") != "WAITING_BUYER_CONFIRM":
+        if not deal or deal.get("status") not in {
+            "WAITING_BUYER_CONFIRM",
+            "WAITING_SELLER_DETAILS",
+            "WAITING_SELLER_REVISION",
+        }:
             return "ఈ deal ఇప్పుడు change requestకి readyగా లేదు."
         self.repository.mark_waiting_buyer_change(int(request["id"]), seller)
         return "💬 ఏ detail మార్చాలి? ఉదా: rate తగ్గించండి / quality skinless కావాలి / delivery కావాలి. మీ మాటల్లో పంపండి."
@@ -109,7 +113,10 @@ class DealDiscussionService:
         return self.repository.latest_for_buyer(buyer, ("WAITING_BUYER_CHANGE",))
 
     def pending_for_buyer_summary(self, buyer: str):
-        return self.repository.latest_for_buyer(buyer, ("WAITING_BUYER_CONFIRM",))
+        return self.repository.latest_for_buyer(
+            buyer,
+            ("WAITING_BUYER_CONFIRM", "WAITING_SELLER_DETAILS", "WAITING_SELLER_REVISION"),
+        )
 
     def _mobile(self, user_id: str) -> str:
         contact = self.contact_resolver(str(user_id)) or {}
@@ -216,5 +223,5 @@ class DealDiscussionService:
             bits.append(f"Seller note: {note}")
         if deal.get("buyer_question"):
             bits.append(f"Buyer clarification: {deal['buyer_question']}")
-        bits.append("🔒 Phone numbers ఇంకా share కాలేదు.")
+        bits.append("🔒 Contact details ఇంకా privateగానే ఉన్నాయి.")
         return "\n".join(bits)
