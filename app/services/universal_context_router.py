@@ -1,10 +1,10 @@
 """Universal conversation-context isolation for PODX deal routing.
 
-This module is product-agnostic.  It prevents an unfinished deal from
+This module is product-agnostic. It prevents an unfinished deal from
 swallowing a new product/service intent while still allowing short follow-up
 messages that only contain deal attributes such as price, quantity or pickup.
 
-An optional AI semantic classifier can be supplied.  When available it is the
+An optional AI semantic classifier can be supplied. When available it is the
 source of truth; the lexical fallback exists so routing remains safe when the
 AI provider is unavailable.
 """
@@ -40,11 +40,24 @@ class UniversalContextRouter:
             for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", str(value or ""))
         }
 
+    @staticmethod
+    def _subject_is_mentioned(subject_tokens: set[str], message_tokens: set[str]) -> bool:
+        if subject_tokens & message_tokens:
+            return True
+        # Handles natural compound variants such as "sonarice" for subject
+        # "rice" without creating product-specific aliases.
+        return any(
+            subject in message or message in subject
+            for subject in subject_tokens
+            for message in message_tokens
+            if len(subject) >= 4 and len(message) >= 4
+        )
+
     def introduces_new_subject(self, request: dict[str, Any], text: str) -> bool:
         """Return True when a message is semantically a new subject/request.
 
         The AI hook may return a bool, or a mapping containing
-        ``new_subject`` / ``same_context``.  Any provider error falls back to a
+        ``new_subject`` / ``same_context``. Any provider error falls back to a
         conservative generic lexical check; no product names are hard-coded.
         """
         if callable(self.semantic_classifier):
@@ -65,15 +78,13 @@ class UniversalContextRouter:
         if not subject_tokens or not message_tokens:
             return False
 
-        # Explicit mention of the current item strongly means same context.
-        if subject_tokens & message_tokens:
+        if self._subject_is_mentioned(subject_tokens, message_tokens):
             return False
 
         candidates = message_tokens - self.DETAIL_WORDS
-        # If the message only contains deal attributes/numbers, keep the
-        # current deal.  If it introduces meaningful new lexical content while
-        # omitting the current subject, let the normal AI intent pipeline route
-        # it as a new request instead of mutating the old deal.
+        # Attribute-only follow-ups stay in the active deal. Meaningful new
+        # lexical content that omits the current subject is allowed to fall
+        # through to the universal intent pipeline as a fresh request.
         return bool(candidates)
 
     def should_consume_as_deal_followup(self, request: dict[str, Any], text: str) -> bool:
