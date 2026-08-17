@@ -62,6 +62,8 @@ def test_final_confirm_is_required_before_conversion(tmp_path):
     notifications.dispatch_plan(request, {"waves": [{"wave": 1, "targets": [{"user_id": buyer, "distance_km": 1.2, "score": .95}]}]})
     commands.process_text(buyer, f"BUY_INTERESTED 52 {seller}")
     commands.process_text(seller, f"SELLER_CONFIRM 52 {buyer}")
+    commands.process_text(seller, "available today delivery")
+    commands.process_text(buyer, f"DEAL_CONFIRM 52 {seller}")
     commands.process_text(buyer, f"ORDER_CONTINUE 52 {seller}")
 
     reply = commands.process_text(buyer, "12 Main Road, Vuyyuru, Krishna District 521165")
@@ -103,7 +105,7 @@ def test_offer_without_price_is_blocked_before_address(tmp_path):
     repo.record_interest(54, buyer, seller)
     repo.set_seller_decision(54, seller, True)
     reply = commands.process_text(buyer, f"ORDER_CONTINUE 54 {seller}")
-    assert "price" in reply.lower()
+    assert "deal discussion" in reply.lower()
     assert repo.get_interest(54, seller)["qualification_status"] == "READY_FOR_BUYER"
 
 
