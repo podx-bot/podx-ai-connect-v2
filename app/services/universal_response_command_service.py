@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from app.services.universal_context_router import UniversalContextRouter
+
 
 class UniversalResponseCommandService:
     INTEREST_WORDS = {
@@ -22,11 +24,18 @@ class UniversalResponseCommandService:
         "క్యాన్సిల్", "ఆసక్తి లేదు", "నో", "nahi", "mat karo",
     }
 
-    def __init__(self, demand_repository, notification_service, notification_repository) -> None:
+    def __init__(
+        self,
+        demand_repository,
+        notification_service,
+        notification_repository,
+        context_router=None,
+    ) -> None:
         self.demands = demand_repository
         self.notifications = notification_service
         self.notification_repository = notification_repository
         self.deals = self._build_deal_service()
+        self.context_router = context_router or UniversalContextRouter()
 
     def _build_deal_service(self):
         try:
@@ -40,6 +49,13 @@ class UniversalResponseCommandService:
             )
         except Exception:
             return None
+
+    def _same_deal_context(self, request: dict, text: str) -> bool:
+        try:
+            return bool(self.context_router.should_consume_as_deal_followup(request, text))
+        except Exception:
+            # Routing failures must never break an already-running deal.
+            return True
 
     def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
         text = self._clean(message)
@@ -80,7 +96,7 @@ class UniversalResponseCommandService:
             seller_deal = self.deals.pending_for_seller(sender_mobile)
             if seller_deal:
                 request = self.demands.get(int(seller_deal["request_id"]))
-                if request:
+                if request and self._same_deal_context(request, text):
                     reply = self.deals.consume_seller_text(
                         request,
                         str(seller_deal["buyer_user_id"]),
@@ -92,7 +108,7 @@ class UniversalResponseCommandService:
             buyer_change = self.deals.pending_for_buyer_change(sender_mobile)
             if buyer_change:
                 request = self.demands.get(int(buyer_change["request_id"]))
-                if request:
+                if request and self._same_deal_context(request, text):
                     reply = self.deals.consume_buyer_change(
                         request,
                         sender_mobile,
@@ -104,7 +120,7 @@ class UniversalResponseCommandService:
             buyer_summary = self.deals.pending_for_buyer_summary(sender_mobile)
             if buyer_summary and self._looks_like_deal_change(text):
                 request = self.demands.get(int(buyer_summary["request_id"]))
-                if request:
+                if request and self._same_deal_context(request, text):
                     self.deals.ask_for_change(request, sender_mobile, str(buyer_summary["seller_user_id"]))
                     return self.deals.consume_buyer_change(
                         request,
