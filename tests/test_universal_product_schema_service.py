@@ -60,6 +60,69 @@ def test_missing_fields_are_product_schema_driven_not_global_list():
     assert "quantity" not in missing
 
 
+def test_lump_sum_price_does_not_force_quantity_for_universal_single_item_deal():
+    service = UniversalProductSchemaService(
+        schema_classifier=lambda subject: {
+            "valid_units": ["piece"],
+            "seller_fields": ["price", "condition", "delivery_or_pickup"],
+            "quantity_required": True,
+            "price_required": True,
+            "confidence": 0.95,
+        }
+    )
+
+    missing = service.relevant_missing_fields(
+        "55 inch smart display",
+        {"rate": 42000, "condition": "new", "fulfilment": "delivery"},
+    )
+
+    assert "quantity" not in missing
+    assert missing == []
+
+
+def test_per_unit_rate_still_requires_quantity_when_schema_requires_it():
+    service = UniversalProductSchemaService(
+        schema_classifier=lambda subject: {
+            "valid_units": ["kg"],
+            "seller_fields": ["price", "delivery_or_pickup"],
+            "quantity_required": True,
+            "price_required": True,
+            "confidence": 0.95,
+        }
+    )
+
+    missing = service.relevant_missing_fields(
+        "bulk product",
+        {"rate": 220, "rate_unit": "kg", "fulfilment": "delivery"},
+    )
+
+    assert missing == ["quantity"]
+
+
+def test_internal_or_testing_schema_fields_never_reach_customer_readiness():
+    service = UniversalProductSchemaService(
+        schema_classifier=lambda subject: {
+            "valid_units": ["piece"],
+            "key_attributes": ["brand", "testing_available", "debug_mode"],
+            "seller_fields": ["price", "condition", "testing_available", "internal_flag", "delivery_or_pickup"],
+            "quantity_required": False,
+            "price_required": True,
+            "confidence": 0.95,
+        }
+    )
+
+    schema = service.schema_for("device")
+    assert "testing_available" not in schema["seller_fields"]
+    assert "internal_flag" not in schema["seller_fields"]
+    assert "testing_available" not in schema["key_attributes"]
+
+    missing = service.relevant_missing_fields(
+        "device",
+        {"rate": 42000, "condition": "new", "fulfilment": "delivery"},
+    )
+    assert missing == []
+
+
 def test_ai_failure_has_safe_generic_fallback():
     def broken(subject):
         raise RuntimeError("provider unavailable")
