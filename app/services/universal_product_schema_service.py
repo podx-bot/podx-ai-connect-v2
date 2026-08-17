@@ -45,6 +45,10 @@ class UniversalProductSchemaService:
     GENERIC_ATTRIBUTES = ["brand", "model_or_variant", "condition_or_quality"]
     GENERIC_BUYER_QUESTIONS = ["price", "availability", "delivery_or_pickup"]
     GENERIC_SELLER_FIELDS = ["price", "availability", "delivery_or_pickup"]
+    RESERVED_FIELD_PREFIXES = (
+        "test", "testing", "debug", "internal", "temp", "temporary", "mock",
+        "sample", "placeholder", "dummy", "example", "dev", "qa",
+    )
 
     def __init__(
         self,
@@ -121,7 +125,7 @@ class UniversalProductSchemaService:
             for key, value in attrs.items():
                 k = self._clean_text(key)
                 v = self._clean_text(value)
-                if k and v:
+                if k and v and self._is_safe_field_name(k):
                     cleaned_attrs[k] = v
             if cleaned_attrs:
                 result["attributes"] = cleaned_attrs
@@ -145,12 +149,27 @@ class UniversalProductSchemaService:
     def relevant_missing_fields(self, subject: str, details: dict[str, Any]) -> list[str]:
         schema = self.schema_for(subject)
         missing: list[str] = []
-        if schema.get("quantity_required") and details.get("quantity") in (None, ""):
+        has_quantity = details.get("quantity") not in (None, "")
+        has_price = details.get("rate") not in (None, "") or details.get("price") not in (None, "")
+        has_rate_unit = details.get("rate_unit") not in (None, "")
+
+        # A quoted price without a per-unit marker is a whole-deal/lump-sum price.
+        # Do not block the deal by forcing quantity in that case. If the buyer
+        # already requested a quantity it is present in ``details``; if the seller
+        # explicitly quotes a per-unit rate, quantity remains commercially useful.
+        if schema.get("quantity_required") and not has_quantity and (not has_price or has_rate_unit):
             missing.append("quantity")
-        if schema.get("price_required") and details.get("rate") in (None, "") and details.get("price") in (None, ""):
+        if schema.get("price_required") and not has_price:
             missing.append("price")
+
         attributes = details.get("attributes") if isinstance(details.get("attributes"), dict) else {}
+        normalized_attrs = {
+            self._clean_token(key).replace(" ", "_"): value
+            for key, value in attributes.items()
+        }
         for field in schema.get("seller_fields") or []:
+            if not self._is_safe_field_name(field):
+                continue
             key = self._clean_token(field).replace(" ", "_")
             if key in {"price", "rate", "quantity"}:
                 continue
@@ -159,7 +178,7 @@ class UniversalProductSchemaService:
             elif key in {"availability", "available"}:
                 present = details.get("availability") not in (None, "")
             else:
-                present = details.get(key) not in (None, "") or attributes.get(field) not in (None, "") or attributes.get(key) not in (None, "")
+                present = details.get(key) not in (None, "") or normalized_attrs.get(key) not in (None, "")
             if not present:
                 missing.append(field)
         return list(dict.fromkeys(missing))
@@ -169,10 +188,10 @@ class UniversalProductSchemaService:
         if not isinstance(raw, dict):
             return None
         units = cls._string_list(raw.get("valid_units"))
-        key_attributes = cls._string_list(raw.get("key_attributes"))
-        optional_attributes = cls._string_list(raw.get("optional_attributes"))
-        buyer_questions = cls._string_list(raw.get("buyer_questions"))
-        seller_fields = cls._string_list(raw.get("seller_fields"))
+        key_attributes = cls._safe_field_list(raw.get("key_attributes"))
+        optional_attributes = cls._safe_field_list(raw.get("optional_attributes"))
+        buyer_questions = cls._safe_field_list(raw.get("buyer_questions"))
+        seller_fields = cls._safe_field_list(raw.get("seller_fields"))
         if not units:
             return None
         return ProductSchema(
@@ -222,8 +241,10 @@ class UniversalProductSchemaService:
     def _schema_prompt(subject: str) -> str:
         return (
             "You are PODX Product Schema Brain. Understand the physical product semantically, without relying on a fixed category list. "
-            "Return exactly one JSON object. Choose only commercially sensible units and fields. Never suggest nonsensical units "
-            "(for example litres for solid construction material, kilograms for a television). Do not invent regulatory claims.\n"
+            "Return exactly one JSON object. Choose only commercially sensible TRANSACTION units and fields. valid_units means units used to buy/sell quantity "
+            "(piece, bag, kg, litre, pack, metre, etc.), never specification units such as screen inches, Hz, watts, storage GB or dimensions. "
+            "Never suggest nonsensical units (for example litres for solid construction material, kilograms for a television). Do not invent regulatory claims. "
+            "Never output test/debug/internal/temp/mock/sample/placeholder fields. For normally singular durable items sold at one quoted total price, quantity_required should be false.\n"
             "Schema: {\"valid_units\":[string],\"key_attributes\":[string],\"optional_attributes\":[string],"
             "\"buyer_questions\":[string],\"seller_fields\":[string],\"quantity_required\":bool,\"price_required\":bool,\"confidence\":0..1}.\n"
             "seller_fields should contain only details genuinely useful to finish a local buyer-seller deal; use delivery_or_pickup for fulfilment.\n"
@@ -234,7 +255,8 @@ class UniversalProductSchemaService:
     def _details_prompt(subject: str, text: str, schema: dict[str, Any]) -> str:
         return (
             "You are PODX Deal Detail Extractor. Extract only facts explicitly stated by the seller. Return exactly JSON and no markdown. "
-            "Do not infer missing values. Use a valid product unit when the text states one. Put product-specific facts under attributes.\n"
+            "Do not infer missing values. A standalone quoted price is the total/lump-sum item price unless the seller explicitly says per/unit. "
+            "Use a valid transaction unit only when the text states one. Put product-specific facts under attributes. Never create test/debug/internal/placeholder attributes.\n"
             "Schema: {\"quantity\":number|null,\"unit\":string|null,\"rate\":number|null,\"rate_unit\":string|null,"
             "\"availability\":string|null,\"fulfilment\":\"delivery|pickup\"|null,\"attributes\":{string:string}}\n"
             f"Product: {subject}\nProduct schema: {json.dumps(schema, ensure_ascii=False)}\nSeller message: {text}"
@@ -250,6 +272,26 @@ class UniversalProductSchemaService:
             if text:
                 cleaned.append(text)
         return list(dict.fromkeys(cleaned))
+
+    @classmethod
+    def _safe_field_list(cls, value: Any) -> list[str]:
+        return [item for item in cls._string_list(value) if cls._is_safe_field_name(item)]
+
+    @classmethod
+    def _is_safe_field_name(cls, value: Any) -> bool:
+        token = cls._clean_token(value).replace("-", "_").replace(" ", "_")
+        if not token or len(token) > 64:
+            return False
+        if not re.fullmatch(r"[a-z0-9_]+", token):
+            return False
+        parts = [part for part in token.split("_") if part]
+        if not parts:
+            return False
+        return not any(
+            part.startswith(prefix)
+            for part in parts
+            for prefix in cls.RESERVED_FIELD_PREFIXES
+        )
 
     @staticmethod
     def _clean_token(value: Any) -> str:
