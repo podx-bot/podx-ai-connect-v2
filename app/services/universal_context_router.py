@@ -26,6 +26,10 @@ class UniversalContextRouter:
         "rs", "inr", "rupees", "need", "want", "have", "sell", "selling",
         "buy", "buying", "good", "best",
     }
+    PACKAGE_WORDS = {
+        "bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes",
+        "piece", "pieces", "pc", "pcs", "unit", "units",
+    }
 
     def __init__(
         self,
@@ -73,8 +77,9 @@ class UniversalContextRouter:
             except Exception:
                 pass
 
+        raw_text = str(text or "")
         subject_tokens = self._tokens((request or {}).get("subject"))
-        message_tokens = self._tokens(text)
+        message_tokens = self._tokens(raw_text)
         if not subject_tokens or not message_tokens:
             return False
 
@@ -82,10 +87,20 @@ class UniversalContextRouter:
             return False
 
         candidates = message_tokens - self.DETAIL_WORDS
-        # Attribute-only follow-ups stay in the active deal. Meaningful new
-        # lexical content that omits the current subject is allowed to fall
-        # through to the universal intent pipeline as a fresh request.
-        return bool(candidates)
+        if not candidates:
+            return False
+
+        # The fallback must be conservative: one unknown descriptor such as
+        # "skinless" should not break an active deal. Two or more meaningful
+        # unknown tokens are strong evidence that a different free-form subject
+        # was introduced. A single candidate also counts when it is paired with
+        # an explicit package/count construction such as "5 kg rice bag".
+        if len(candidates) >= 2:
+            return True
+
+        has_number = bool(re.search(r"\d", raw_text))
+        has_package = bool(message_tokens & self.PACKAGE_WORDS)
+        return has_number and has_package
 
     def should_consume_as_deal_followup(self, request: dict[str, Any], text: str) -> bool:
         return not self.introduces_new_subject(request, text)
