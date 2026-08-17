@@ -1,15 +1,28 @@
 """Private deal clarification between matched parties before order/contact actions."""
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 
 class DealDiscussionService:
-    def __init__(self, repository, whatsapp_service, contact_resolver) -> None:
+    def __init__(self, repository, whatsapp_service, contact_resolver, product_schema_service=None) -> None:
         self.repository = repository
         self.whatsapp = whatsapp_service
         self.contact_resolver = contact_resolver
+        self.product_schema = product_schema_service or self._auto_product_schema_service()
+
+    @staticmethod
+    def _auto_product_schema_service():
+        try:
+            from app.services.universal_product_schema_service import UniversalProductSchemaService
+            return UniversalProductSchemaService(
+                api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+                model=os.getenv("GEMINI_VOICE_MODEL", "gemini-3.6-flash").strip() or "gemini-3.6-flash",
+            )
+        except Exception:
+            return None
 
     def _send_buttons_or_text(self, mobile, body, buttons):
         sender = getattr(self.whatsapp, "send_reply_buttons", None)
@@ -40,7 +53,19 @@ class DealDiscussionService:
         if not deal or deal.get("status") not in {"WAITING_SELLER_DETAILS", "WAITING_SELLER_REVISION"}:
             return None
         parsed = self._parse_details(request, text)
-        merged = {**(deal.get("details") or {}), **parsed}
+        if self._category(request) == "PRODUCT" and self.product_schema is not None:
+            try:
+                ai_details = self.product_schema.extract_details(str(request.get("subject") or "item"), text)
+                if isinstance(ai_details, dict):
+                    parsed = self._merge_detail_dicts(parsed, ai_details)
+            except Exception:
+                pass
+        merged = self._merge_detail_dicts(deal.get("details") or {}, parsed)
+
+        invalid_unit = self._invalid_product_unit(request, merged)
+        if invalid_unit:
+            return invalid_unit
+
         missing = self._missing_required(request, merged, text)
         if missing:
             labels = ", ".join(missing)
@@ -63,6 +88,18 @@ class DealDiscussionService:
             ],
         )
         return "✅ Deal details save చేశాను. Buyerకి summary పంపాను; contact ఇంకా privateగానే ఉంది."
+
+    @staticmethod
+    def _merge_detail_dicts(base, incoming):
+        merged = dict(base or {})
+        for key, value in dict(incoming or {}).items():
+            if key == "attributes" and isinstance(value, dict):
+                attrs = dict(merged.get("attributes") or {})
+                attrs.update(value)
+                merged["attributes"] = attrs
+            elif value not in (None, ""):
+                merged[key] = value
+        return merged
 
     def ask_for_change(self, request, buyer: str, seller: str):
         deal = self.repository.get(int(request["id"]), seller)
@@ -158,6 +195,14 @@ class DealDiscussionService:
             return "day"
         return value
 
+    def _schema(self, request):
+        if self._category(request) != "PRODUCT" or self.product_schema is None:
+            return None
+        try:
+            return self.product_schema.schema_for(str(request.get("subject") or "item"))
+        except Exception:
+            return None
+
     def _seller_prompt(self, request, seed) -> str:
         subject = str(request.get("subject") or "item")
         existing = []
@@ -168,7 +213,14 @@ class DealDiscussionService:
         known = f" ఇప్పటికే: {', '.join(existing)}." if existing else ""
         category = self._category(request)
         if category == "PRODUCT":
-            fields = "price/rate, type/variant/size (ఉంటే), availability, delivery/pickup"
+            schema = self._schema(request)
+            if schema and float(schema.get("confidence") or 0.0) >= 0.5:
+                fields = list(dict.fromkeys((schema.get("seller_fields") or []) + (schema.get("key_attributes") or [])))
+                fields_text = ", ".join(str(x) for x in fields[:8]) or "price, availability, delivery/pickup"
+                units = ", ".join(str(x) for x in (schema.get("valid_units") or [])[:6])
+                unit_text = f" ఈ productకి సరైన units: {units}." if units else ""
+                return f"🤝 PODX Deal Discussion\n{subject}.{known}\nBuyerతో contact share చేసే ముందు relevant details మాత్రమే చెప్పండి: {fields_text}.{unit_text} ఇప్పటికే ఉన్న detail మళ్లీ చెప్పాల్సిన అవసరం లేదు. ఒకే text/voice replyలో చెప్పవచ్చు."
+            fields = "price/rate, relevant type/variant/size (ఉంటే), availability, delivery/pickup"
         elif category in {"SERVICE", "SERVICES"}:
             fields = "work scope, rate, available date/time, location/visit details"
         elif category in {"WORK", "WORKERS", "JOB", "JOBS"}:
@@ -184,14 +236,11 @@ class DealDiscussionService:
         result: dict[str, Any] = {"seller_note": clean}
 
         unit_words = r"kg|kgs|kilograms?|కేజీ|కేజీలు|కిలో|కిలోలు|g|gm|gms|grams?|l|ltr|litres?|liters?|ml|pieces?|pc|pcs|units?|bags?|packs?|packets?|boxes?|hours?|hrs?|days?"
-
-        # Universal quantity: 5 kg, 2 bags, 10 pcs, 1 litre, etc.
         qty = re.search(rf"(\d+(?:\.\d+)?)\s*({unit_words})", low, re.I)
         if qty:
             result["quantity"] = float(qty.group(1))
             result["unit"] = cls._normalize_unit(qty.group(2))
 
-        # Universal price: ₹300, rs 300, 300 rs, 300rs, INR 300, 300 per kg.
         price = re.search(r"(?:₹|rs\.?|inr|రూ\.?|రూపాయలు?)\s*(\d+(?:\.\d+)?)", low, re.I)
         if not price:
             price = re.search(r"(\d+(?:\.\d+)?)\s*(?:rs\.?|inr|రూ\.?|రూపాయలు?)", low, re.I)
@@ -210,7 +259,6 @@ class DealDiscussionService:
                     if pack_match:
                         result["rate_unit"] = cls._normalize_unit(pack_match.group(1))
 
-        # Type/quality/variant is open-ended. Prefer explicit labels, then common descriptive words.
         labelled = re.search(r"(?:quality|type|variant|brand|model|size)\s*[:=-]?\s*([\w\- ]{2,40})", low, re.I)
         if labelled:
             value = re.split(r"\b(?:delivery|pickup|available|today|tomorrow|rs|inr)\b", labelled.group(1), maxsplit=1)[0].strip(" ,.-")
@@ -226,7 +274,6 @@ class DealDiscussionService:
             if found_quality:
                 result["quality"] = ", ".join(found_quality[:4])
             else:
-                # Preserve free-form variant tokens such as "sona rice" / "sonarice" without product-specific rules.
                 words = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", low)
                 stop = {
                     "only", "pickup", "delivery", "available", "today", "tomorrow", "price", "rate",
@@ -249,10 +296,28 @@ class DealDiscussionService:
             result["fulfilment"] = "pickup"
         return result
 
+    def _invalid_product_unit(self, request, details):
+        if self._category(request) != "PRODUCT" or self.product_schema is None:
+            return None
+        subject = str(request.get("subject") or "item")
+        schema = self._schema(request)
+        if not schema or float(schema.get("confidence") or 0.0) < 0.5:
+            return None
+        for key in ("unit", "rate_unit"):
+            unit = details.get(key)
+            if unit and not self.product_schema.validate_unit(subject, unit):
+                valid = ", ".join(str(x) for x in (schema.get("valid_units") or [])[:6])
+                return f"ఈ {subject}కి '{unit}' unit సరిపోలడం లేదు. సాధారణంగా సరైన units: {valid}. మీ dealలో సరైన unit చెప్పండి."
+        return None
+
     def _missing_required(self, request, details, raw_text: str):
         category = self._category(request)
         missing = []
         if category == "PRODUCT":
+            combined = self._merge_detail_dicts(request, details)
+            schema = self._schema(request)
+            if schema and float(schema.get("confidence") or 0.0) >= 0.5 and self.product_schema is not None:
+                return self.product_schema.relevant_missing_fields(str(request.get("subject") or "item"), combined)
             if details.get("quantity") is None and request.get("quantity") is None:
                 missing.append("quantity")
             if details.get("rate") is None and request.get("price") is None:
@@ -290,7 +355,10 @@ class DealDiscussionService:
                 bits.append(f"Total: ₹{total:,.0f}" if total.is_integer() else f"Total: ₹{total:,.2f}")
             except (TypeError, ValueError):
                 pass
-        if details.get("quality"):
+        attrs = details.get("attributes") if isinstance(details.get("attributes"), dict) else {}
+        if attrs:
+            bits.append("Details: " + ", ".join(f"{k}: {v}" for k, v in list(attrs.items())[:6]))
+        elif details.get("quality"):
             bits.append(f"Quality/Type: {details['quality']}")
         if details.get("availability"):
             bits.append(f"Availability: {details['availability']}")
