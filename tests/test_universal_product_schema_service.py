@@ -123,6 +123,62 @@ def test_internal_or_testing_schema_fields_never_reach_customer_readiness():
     assert missing == []
 
 
+def test_semantic_field_aliases_prevent_false_missing_for_same_meaning_details():
+    service = UniversalProductSchemaService(
+        schema_classifier=lambda subject: {
+            "valid_units": ["piece"],
+            "seller_fields": [
+                "price",
+                "exact_model_number",
+                "condition_details",
+                "functionality_status",
+                "delivery_or_pickup",
+            ],
+            "quantity_required": False,
+            "price_required": True,
+            "confidence": 0.98,
+        }
+    )
+
+    missing = service.relevant_missing_fields(
+        "smart display",
+        {
+            "rate": 42000,
+            "fulfilment": "delivery",
+            "attributes": {
+                "model": "UA55",
+                "condition": "new",
+                "working_status": "fully working",
+            },
+        },
+    )
+
+    assert missing == []
+
+
+def test_unrelated_fields_do_not_collapse_into_semantic_aliases():
+    service = UniversalProductSchemaService(
+        schema_classifier=lambda subject: {
+            "valid_units": ["piece"],
+            "seller_fields": ["price", "model", "warranty", "delivery_or_pickup"],
+            "quantity_required": False,
+            "price_required": True,
+            "confidence": 0.98,
+        }
+    )
+
+    missing = service.relevant_missing_fields(
+        "device",
+        {
+            "rate": 1000,
+            "fulfilment": "pickup",
+            "attributes": {"model_number": "X1", "condition": "new"},
+        },
+    )
+
+    assert missing == ["warranty"]
+
+
 def test_ai_failure_has_safe_generic_fallback():
     def broken(subject):
         raise RuntimeError("provider unavailable")
