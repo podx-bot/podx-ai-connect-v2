@@ -11,11 +11,24 @@ class AdminMonitoringRuntimeService:
         self.delegate = delegate
         self.admin_mobile = str(admin_mobile or os.getenv("PODX_ADMIN_MOBILE") or "").strip()
 
-    def process(self, sender_user_id: str, message: str) -> str:
+    def process(
+        self,
+        sender_user_id: str | None = None,
+        message: str = "",
+        *,
+        sender_mobile: str | None = None,
+    ) -> str:
+        """Process admin commands while remaining compatible with webhook callers.
+
+        Older wrappers call ``process(sender_user_id, message)`` positionally while
+        the WhatsApp webhook calls ``process(sender_mobile=..., message=...)``.
+        Accept both names so this outermost wrapper cannot break ordinary traffic.
+        """
+        sender = str(sender_mobile if sender_mobile is not None else (sender_user_id or ""))
         clean = " ".join(str(message or "").strip().split())
         if not clean.upper().startswith("ADMIN "):
-            return self.delegate.process(sender_user_id, message)
-        if not self.admin_mobile or str(sender_user_id) != self.admin_mobile:
+            return self.delegate.process(sender, message)
+        if not self.admin_mobile or sender != self.admin_mobile:
             return "ఈ admin command authorized కాదు."
 
         upper = clean.upper()
