@@ -8,6 +8,7 @@ class MarketplaceConversationService(RoleAwareConversationService):
     COMPLETION_SKIP_WORDS = {"skip", "later", "తెలియదు", "తర్వాత", "వద్దు", "n/a"}
     CONFIRM_WORDS = {"1", "yes", "y", "ok", "okay", "correct", "అవును", "సరే", "కరెక్ట్"}
     EDIT_WORDS = {"2", "edit", "change", "no", "n", "కాదు", "మార్చు", "ఎడిట్"}
+    GREETING_WORDS = {"hi", "hello", "hey", "హాయ్", "హలో"}
 
     def __init__(self, user_repository, session_registry, intent_router, marketplace_repository, appointment_service=None, demand_capture_service=None) -> None:
         super().__init__(user_repository=user_repository, session_registry=session_registry, intent_router=intent_router, appointment_service=appointment_service, demand_capture_service=demand_capture_service)
@@ -19,6 +20,14 @@ class MarketplaceConversationService(RoleAwareConversationService):
         session = self.session_registry.get(sender_mobile)
         existing_user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
         registered = bool(existing_user and existing_user.get("registration_complete") == 1)
+
+        # Greetings are deterministic control messages. Never send a registered
+        # user's Hi through an external AI classifier: a provider outage must not
+        # be able to break the most basic entry point into PODX.
+        if registered and normalized in self.GREETING_WORDS:
+            session.step = ConversationStep.MAIN_MENU
+            session.data.clear()
+            return self._reply(sender_mobile, self._main_menu())
 
         if registered and self.appointment_service is not None:
             appointment_command = self.appointment_service.process_provider_command(sender_mobile, clean_message)
