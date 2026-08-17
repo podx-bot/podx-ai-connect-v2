@@ -13,6 +13,7 @@ from app.services.hybrid_support_service import HybridSupportService
 from app.services.product_pricelist_ai_service import ProductPriceListAIService
 from app.services.smart_reengagement_service import SmartReengagementService
 from app.services.street_vendor_proximity_service import StreetVendorProximityService
+from app.services.universal_context_router import UniversalContextRouter
 
 
 class ProductBuyerRuntimeService:
@@ -30,7 +31,7 @@ class ProductBuyerRuntimeService:
     def __init__(self, notification_repository, demand_repository, catalog_repository, product_desk, rag_service,
                  buyer_intelligence, decision_service, seller_escalation=None, user_repository=None,
                  price_list_ai=None, whatsapp_service=None, reengagement_service=None, hybrid_support=None,
-                 street_vendor_runtime=None, business_desk_runtime=None) -> None:
+                 street_vendor_runtime=None, business_desk_runtime=None, context_router=None) -> None:
         self.notifications = notification_repository
         self.demands = demand_repository
         self.catalog = catalog_repository
@@ -39,6 +40,7 @@ class ProductBuyerRuntimeService:
         self.buyer_intelligence = buyer_intelligence
         self.decision_service = decision_service
         self.seller_escalation = seller_escalation
+        self.context_router = context_router or UniversalContextRouter()
         db_path = getattr(catalog_repository, "db_path", "podx.db")
         effective_whatsapp = whatsapp_service or getattr(seller_escalation, "whatsapp", None)
         contact_resolver = getattr(seller_escalation, "contact_resolver", None)
@@ -93,6 +95,11 @@ class ProductBuyerRuntimeService:
         request = self.demands.get(int(interest["request_id"]))
         if not request or str(request.get("domain") or "").upper() != "PRODUCT":
             return None
+        try:
+            if self.context_router.introduces_new_subject(request, str(message or "")):
+                return None
+        except Exception:
+            pass
         subject = str(request.get("subject") or "Product").strip()
         seller_user_id = str(interest.get("responder_user_id") or "").strip()
         if not seller_user_id:
