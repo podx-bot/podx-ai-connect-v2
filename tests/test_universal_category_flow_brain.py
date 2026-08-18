@@ -27,6 +27,22 @@ def test_category_matrix_covers_reference_app_behaviours():
         assert (decision.category, decision.side, decision.action) == expected, message
 
 
+def test_counted_worker_hiring_is_natural_and_not_quantity_sensitive():
+    brain = UniversalCategoryFlowBrain()
+    messages = (
+        "need 3 workers for warehouse",
+        "hire 12 staff for hotel",
+        "5 workers required tomorrow",
+        "3 workers కావాలి warehouseకి",
+        "workers 4 కావాలి deliveryకి",
+    )
+    for message in messages:
+        decision = brain.classify(message)
+        assert (decision.category, decision.side, decision.action) == (
+            "JOBS", "PROVIDER", "HIRE"
+        ), message
+
+
 def test_provider_intents_beat_generic_seeker_words():
     brain = UniversalCategoryFlowBrain()
     service = brain.classify("నేను plumber service ఇస్తాను customers కావాలి")
