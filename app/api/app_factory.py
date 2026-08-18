@@ -24,6 +24,7 @@ from app.services.ride_settlement_runtime_service import RideSettlementRuntimeSe
 from app.services.runtime_complaint_prevention_service import RuntimeComplaintPreventionService
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
 from app.services.universal_correction_service import UniversalCorrectionService
+from app.services.universal_profile_summary_service import UniversalProfileSummaryService
 
 
 def create_app() -> FastAPI:
@@ -79,14 +80,20 @@ def create_app() -> FastAPI:
         profile_essentials=profile_essentials,
         session_registry=session_registry,
     )
+    profile_summary = UniversalProfileSummaryService(
+        delegate=role_attachment,
+        user_repository=container.user_repository,
+        marketplace_repository=container.marketplace_repository,
+    )
     container.universal_category_flow_brain = category_brain
     container.conversation_observability_repository = observability_repository
     container.natural_conversation_orchestrator = orchestrator
     container.progressive_role_profile_essentials_service = profile_essentials
     container.dynamic_role_profile_attachment_service = role_attachment
+    container.universal_profile_summary_service = profile_summary
 
     monitoring = AdminMonitoringService(container.settings.database_path)
-    admin_runtime = AdminMonitoringRuntimeService(monitoring=monitoring, delegate=role_attachment)
+    admin_runtime = AdminMonitoringRuntimeService(monitoring=monitoring, delegate=profile_summary)
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
 
