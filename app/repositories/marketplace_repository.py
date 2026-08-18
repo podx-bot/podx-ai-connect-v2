@@ -70,6 +70,28 @@ class MarketplaceRepository:
         )
         return int(cursor.lastrowid)
 
+    def list_seller_listings_for_user(self, seller_mobile: str, limit: int = 20) -> list[dict]:
+        rows = self.database.fetchall(
+            """SELECT product_name,price_text,area,updated_at
+               FROM seller_listings
+               WHERE seller_mobile=? AND status='ACTIVE'
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ?""",
+            (str(seller_mobile), max(1, int(limit))),
+        )
+        return [dict(row) for row in rows]
+
+    def list_service_provider_profiles_for_user(self, provider_mobile: str, limit: int = 20) -> list[dict]:
+        rows = self.database.fetchall(
+            """SELECT service_name,details,area,updated_at
+               FROM service_provider_profiles
+               WHERE provider_mobile=? AND status='ACTIVE'
+               ORDER BY updated_at DESC, id DESC
+               LIMIT ?""",
+            (str(provider_mobile), max(1, int(limit))),
+        )
+        return [dict(row) for row in rows]
+
     def find_service_providers(self, service_names: list[str], limit: int = 30) -> list[dict]:
         """Return unique active providers whose saved service name matches any supplied alias."""
         aliases = [self._norm(value) for value in service_names if self._norm(value)]
