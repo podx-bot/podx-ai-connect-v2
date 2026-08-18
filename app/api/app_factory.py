@@ -19,6 +19,7 @@ from app.services.multilingual_onboarding_service import MultilingualOnboardingS
 from app.services.natural_conversation_orchestrator import NaturalConversationOrchestrator
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
+from app.services.progressive_role_profile_essentials_service import ProgressiveRoleProfileEssentialsService
 from app.services.ride_settlement_runtime_service import RideSettlementRuntimeService
 from app.services.runtime_complaint_prevention_service import RuntimeComplaintPreventionService
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
@@ -69,14 +70,19 @@ def create_app() -> FastAPI:
             "LEDGER": getattr(container.conversation_service, "ledger_runtime", None),
         },
     )
+    session_registry = getattr(container.base_conversation_service, "session_registry", None)
+    profile_essentials = ProgressiveRoleProfileEssentialsService(container.user_repository)
     role_attachment = DynamicRoleProfileAttachmentService(
         delegate=orchestrator,
         category_brain=category_brain,
         user_repository=container.user_repository,
+        profile_essentials=profile_essentials,
+        session_registry=session_registry,
     )
     container.universal_category_flow_brain = category_brain
     container.conversation_observability_repository = observability_repository
     container.natural_conversation_orchestrator = orchestrator
+    container.progressive_role_profile_essentials_service = profile_essentials
     container.dynamic_role_profile_attachment_service = role_attachment
 
     monitoring = AdminMonitoringService(container.settings.database_path)
@@ -84,7 +90,6 @@ def create_app() -> FastAPI:
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
 
-    session_registry = getattr(container.base_conversation_service, "session_registry", None)
     onboarding = MultilingualOnboardingService(
         delegate=container.base_conversation_service,
         session_registry=session_registry,
