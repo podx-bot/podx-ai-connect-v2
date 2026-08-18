@@ -12,6 +12,7 @@ from app.services.admin_monitoring_runtime_service import AdminMonitoringRuntime
 from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.domain_complaint_prevention_service import DomainComplaintPreventionService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
+from app.services.dynamic_role_profile_attachment_service import DynamicRoleProfileAttachmentService
 from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
 from app.services.fresh_test_reset_service import FreshTestResetService
 from app.services.multilingual_onboarding_service import MultilingualOnboardingService
@@ -68,12 +69,18 @@ def create_app() -> FastAPI:
             "LEDGER": getattr(container.conversation_service, "ledger_runtime", None),
         },
     )
+    role_attachment = DynamicRoleProfileAttachmentService(
+        delegate=orchestrator,
+        category_brain=category_brain,
+        user_repository=container.user_repository,
+    )
     container.universal_category_flow_brain = category_brain
     container.conversation_observability_repository = observability_repository
     container.natural_conversation_orchestrator = orchestrator
+    container.dynamic_role_profile_attachment_service = role_attachment
 
     monitoring = AdminMonitoringService(container.settings.database_path)
-    admin_runtime = AdminMonitoringRuntimeService(monitoring=monitoring, delegate=orchestrator)
+    admin_runtime = AdminMonitoringRuntimeService(monitoring=monitoring, delegate=role_attachment)
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
 
