@@ -21,6 +21,7 @@ class Step:
 class Session:
     def __init__(self, name):
         self.step = Step(name)
+        self.data = {}
 
 
 class Sessions:
@@ -99,18 +100,20 @@ def build_stack(*, registered=True, step="MAIN_MENU", state_replies=None):
 
 def test_fresh_user_onboarding_beats_every_domain_handler():
     app, base, commands, handlers, delegate = build_stack(registered=False, step="START")
-    assert app.process("u1", "need 3 workers for warehouse") == "PROFILE_OR_BASE"
-    assert base.calls
+    response = app.process("u1", "need 3 workers for warehouse")
+    assert "Choose your language" in response
     assert not commands.calls
     assert all(not handler.calls for handler in handlers.values())
     assert not delegate.calls
 
 
-def test_incomplete_profile_capability_step_cannot_be_stolen_by_product_words():
+def test_legacy_capability_step_migrates_without_old_role_menu():
     app, base, commands, handlers, delegate = build_stack(registered=True, step="WAITING_CAPABILITIES")
-    assert app.process("u1", "seller and buyer") == "PROFILE_OR_BASE"
-    assert base.calls
+    response = app.process("u1", "seller and buyer")
+    assert "PODX" in response
+    assert "profile" in response.lower() or "ప్రొఫైల్" in response
     assert all(not handler.calls for handler in handlers.values())
+    assert not delegate.calls
 
 
 def test_active_buyer_doubt_beats_product_category_routing():
