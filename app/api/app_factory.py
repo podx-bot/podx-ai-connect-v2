@@ -11,6 +11,7 @@ from app.repositories.podx_meet_repository import PodxMeetRepository
 from app.services.admin_monitoring_runtime_service import AdminMonitoringRuntimeService
 from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
+from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
 from app.services.natural_conversation_orchestrator import NaturalConversationOrchestrator
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
@@ -70,7 +71,18 @@ def create_app() -> FastAPI:
     admin_runtime = AdminMonitoringRuntimeService(monitoring=monitoring, delegate=orchestrator)
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
-    container.conversation_service = admin_runtime
+
+    # Final application-level invariant: onboarding and an active human/deal
+    # state always win before admin/category/module routing. Explicit dependency
+    # injection keeps this gate valid even though the composed wrappers do not
+    # expose base_conversation/response_commands attributes themselves.
+    app_flow = EndToEndAppFlowService(
+        inner_service=admin_runtime,
+        base_conversation=container.base_conversation_service,
+        response_commands=container.universal_response_command_service,
+    )
+    container.end_to_end_app_flow_service = app_flow
+    container.conversation_service = app_flow
 
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
