@@ -1,0 +1,37 @@
+"""Container upgrade that wires the state-first universal commerce engine."""
+from __future__ import annotations
+
+from app.core.container import AppContainer
+from app.services.universal_aware_conversation_service import UniversalAwareConversationService
+from app.services.universal_commerce_response_command_service import UniversalCommerceResponseCommandService
+
+
+class UniversalCommerceAppContainer(AppContainer):
+    """AppContainer with Universal Commerce Conversation Engine V1 enabled."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.universal_response_command_service = UniversalCommerceResponseCommandService(
+            demand_repository=self.universal_demand_repository,
+            notification_service=self.universal_notification_service,
+            notification_repository=self.universal_notification_repository,
+        )
+
+        # Rebuild the universal-aware layer once so every text/voice commerce
+        # message enters the state-first engine before legacy match/order flows.
+        self.conversation_service = UniversalAwareConversationService(
+            response_commands=self.universal_response_command_service,
+            live_capture=self.universal_live_capture_service,
+            image_service=self.universal_image_service,
+            base_conversation=self.base_conversation_service,
+            product_runtime=self.product_buyer_runtime_service,
+            seller_escalation=self.seller_ai_escalation_service,
+            grocery_runtime=self.grocery_rfq_runtime_service,
+            grocery_order_runtime=self.grocery_order_runtime_service,
+            catering_runtime=self.catering_rfq_runtime_service,
+            catering_menu_ai=self.catering_menu_ai_service,
+            event_runtime=self.event_master_runtime_service,
+            event_provider_runtime=self.event_provider_runtime_service,
+            ride_runtime=self.ride_runtime_service,
+        )

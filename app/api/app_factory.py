@@ -4,7 +4,7 @@ from app.api.appointment_location_middleware import AppointmentLocationMiddlewar
 from app.api.routes.debug import router as debug_router
 from app.api.routes.fast_webhook import router as webhook_router
 from app.api.routes.health import router as health_router
-from app.core.container import AppContainer
+from app.core.universal_commerce_container import UniversalCommerceAppContainer
 from app.repositories.conversation_observability_repository import ConversationObservabilityRepository
 from app.repositories.driver_kyc_repository import DriverKYCRepository
 from app.repositories.podx_meet_repository import PodxMeetRepository
@@ -20,7 +20,7 @@ from app.services.ride_settlement_runtime_service import RideSettlementRuntimeSe
 def create_app() -> FastAPI:
     app = FastAPI(title="PODX AI CONNECT V2", version="2.0.0")
 
-    container = AppContainer()
+    container = UniversalCommerceAppContainer()
     meet_repository = PodxMeetRepository(container.settings.database_path)
     meet_runtime = PodxMeetRuntimeService(meet_repository, user_repository=container.user_repository)
     container.podx_meet_repository = meet_repository
