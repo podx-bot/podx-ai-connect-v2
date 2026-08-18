@@ -49,9 +49,11 @@ class Commands:
 
 
 class Inner:
-    def __init__(self, base, commands, reply="INNER_FLOW"):
-        self.base_conversation = base
-        self.response_commands = commands
+    def __init__(self, base=None, commands=None, reply="INNER_FLOW"):
+        if base is not None:
+            self.base_conversation = base
+        if commands is not None:
+            self.response_commands = commands
         self.reply = reply
         self.calls = []
 
@@ -104,3 +106,32 @@ def test_registered_start_state_is_not_forced_back_into_registration():
     flow = EndToEndAppFlowService(Inner(base, commands, reply="WELCOME_BACK"))
 
     assert flow.process("u", "Hi") == "WELCOME_BACK"
+
+
+def test_composed_wrapper_can_use_explicit_profile_and_state_dependencies():
+    base = Base(user={"registration_complete": 1}, step="MAIN_MENU")
+    commands = Commands(reply="STATE_FIRST")
+    composed = Inner(reply="ADMIN_OR_CATEGORY")  # deliberately exposes no base/commands attrs
+    flow = EndToEndAppFlowService(
+        composed,
+        base_conversation=base,
+        response_commands=commands,
+    )
+
+    assert flow.process("buyer", "Warranty ఉందా?") == "STATE_FIRST"
+    assert composed.calls == []
+
+
+def test_explicit_profile_dependency_blocks_composed_wrappers_for_fresh_user():
+    base = Base(user=None, step="START")
+    commands = Commands(reply="SHOULD_NOT_RUN")
+    composed = Inner(reply="SHOULD_NOT_RUN")
+    flow = EndToEndAppFlowService(
+        composed,
+        base_conversation=base,
+        response_commands=commands,
+    )
+
+    assert flow.process("new-user", "Hi") == "PROFILE_FLOW"
+    assert commands.calls == []
+    assert composed.calls == []
