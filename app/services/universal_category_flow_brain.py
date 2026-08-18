@@ -7,6 +7,7 @@ but stateful app routing should never depend on it.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -64,9 +65,18 @@ class UniversalCategoryFlowBrain:
             "workers కావాలి", "worker కావాలి", "staff కావాలి", "వర్కర్స్ కావాలి",
             "need workers", "need staff", "hire workers", "workers required",
         )
+        counted_hire_patterns = (
+            r"\bneed\s+\d{1,3}\s+(?:workers?|staff)\b",
+            r"\bhire\s+\d{1,3}\s+(?:workers?|staff)\b",
+            r"\b\d{1,3}\s+(?:workers?|staff)\s+(?:needed|required)\b",
+            r"\b\d{1,3}\s+(?:workers?|staff)\s+కావాలి",
+            r"\b(?:workers?|staff)\s+\d{1,3}\s+కావాలి",
+        )
         if any(term in text for term in job_seek):
             return CategoryFlowDecision("JOBS", "SEEKER", "FIND", 0.99)
-        if any(term in text for term in job_hire):
+        if any(term in text for term in job_hire) or any(
+            re.search(pattern, text) for pattern in counted_hire_patterns
+        ):
             return CategoryFlowDecision("JOBS", "PROVIDER", "HIRE", 0.99)
 
         freelance_terms = (
