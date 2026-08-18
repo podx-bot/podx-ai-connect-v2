@@ -52,9 +52,39 @@ def test_explicit_buyer_doubt_state_wins_over_same_users_seller_state():
 
 def test_rice_seller_fact_reply_is_not_forced_into_question_flow():
     engine = UniversalCommerceConversationEngine()
-    deals = FakeDeals(seller={"request_id": 30, "buyer_user_id": "b", "seller_user_id": "s"})
+    deals = FakeDeals(seller={"request_id": 30, "buyer_user_id": "b", "seller_user_id": "s", "status": "WAITING_SELLER_DETAILS"})
     decision = engine.decide("s", "5 kg sona rice bag ₹300 pickup available", deals=deals)
     assert decision.intent == "SELLER_DETAILS"
+
+
+def test_live_warranty_reply_routes_to_buyer_clarification_before_missing_fields():
+    engine = UniversalCommerceConversationEngine()
+    deals = FakeDeals(
+        seller={
+            "request_id": 31,
+            "buyer_user_id": "buyer",
+            "seller_user_id": "seller",
+            "status": "WAITING_SELLER_REVISION",
+        }
+    )
+    decision = engine.decide("seller", "1 year warranty ఉంది", deals=deals)
+    assert decision.intent == "SELLER_CLARIFICATION_REPLY"
+    assert decision.request_id == 31
+    assert decision.recommended_action == "ROUTE_TO_COUNTERPARTY"
+
+
+def test_seller_counter_question_routes_back_to_buyer_privately():
+    engine = UniversalCommerceConversationEngine()
+    deals = FakeDeals(
+        seller={
+            "request_id": 32,
+            "buyer_user_id": "buyer",
+            "seller_user_id": "seller",
+            "status": "WAITING_SELLER_REVISION",
+        }
+    )
+    decision = engine.decide("seller", "ఏ color కావాలి?", deals=deals)
+    assert decision.intent == "SELLER_COUNTER_QUESTION"
 
 
 def test_cement_question_is_generic_question_not_unit_validation():
