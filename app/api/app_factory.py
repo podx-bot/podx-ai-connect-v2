@@ -16,6 +16,7 @@ from app.services.natural_conversation_orchestrator import NaturalConversationOr
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
 from app.services.ride_settlement_runtime_service import RideSettlementRuntimeService
+from app.services.runtime_complaint_prevention_service import RuntimeComplaintPreventionService
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
 
 
@@ -72,17 +73,24 @@ def create_app() -> FastAPI:
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
 
-    # Final application-level invariant: onboarding and an active human/deal
-    # state always win before admin/category/module routing. Explicit dependency
-    # injection keeps this gate valid even though the composed wrappers do not
-    # expose base_conversation/response_commands attributes themselves.
+    # Application invariant: onboarding and active human/deal state always win
+    # before admin/category/module routing.
     app_flow = EndToEndAppFlowService(
         inner_service=admin_runtime,
         base_conversation=container.base_conversation_service,
         response_commands=container.universal_response_command_service,
     )
     container.end_to_end_app_flow_service = app_flow
-    container.conversation_service = app_flow
+
+    # Final UX safety net: never silently drop a request and never trap a user in
+    # the same unresolved bot prompt. Domain state remains owned by app_flow.
+    quality_guard = RuntimeComplaintPreventionService(
+        delegate=app_flow,
+        category_brain=category_brain,
+        observability_repository=observability_repository,
+    )
+    container.runtime_complaint_prevention_service = quality_guard
+    container.conversation_service = quality_guard
 
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
