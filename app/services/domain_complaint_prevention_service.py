@@ -100,7 +100,7 @@ class DomainComplaintPreventionService:
         )) and not self._has_any(lower, (
             "same specification", "same basis", "normalized", "normalised", "ఒకే specification", "ఒకే basis"
         )):
-            return text + "\n\nQuotesను ఒకే specification / quantity / delivery basisలో normalize చేసి compare చేయాలి.", "RFQ_NORMALIZATION_GUARD"
+            return text + "\n\nQuotesను same specification / quantity / delivery basisలో normalize చేసి compare చేయాలి.", "RFQ_NORMALIZATION_GUARD"
 
         if domain == "SUPPORT" and self._has_any(lower, (
             "unable", "cannot resolve", "not resolved", "unresolved", "పరిష్కారం కాలేదు", "సాల్వ్ కాలేదు"
