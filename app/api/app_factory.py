@@ -13,6 +13,7 @@ from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.domain_complaint_prevention_service import DomainComplaintPreventionService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
 from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
+from app.services.fresh_test_reset_service import FreshTestResetService
 from app.services.natural_conversation_orchestrator import NaturalConversationOrchestrator
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
@@ -83,11 +84,22 @@ def create_app() -> FastAPI:
     )
     container.end_to_end_app_flow_service = app_flow
 
+    # Testing/recovery invariant: explicit Fresh Test can snapshot profile data,
+    # pause old active deal state and re-enter onboarding without deleting history.
+    # Plain Hi on a stale active deal asks Continue vs Fresh Test instead of being
+    # consumed as a buyer/seller clarification response.
+    fresh_test = FreshTestResetService(
+        delegate=app_flow,
+        user_repository=container.user_repository,
+        session_registry=getattr(container.base_conversation_service, "session_registry", None),
+    )
+    container.fresh_test_reset_service = fresh_test
+
     # Domain complaint-prevention layer: enforce completion-time guarantees for
     # jobs, commerce, services, mobility, freelance, RFQ and support while the
     # underlying business state remains owned by app_flow.
     domain_guard = DomainComplaintPreventionService(
-        delegate=app_flow,
+        delegate=fresh_test,
         category_brain=category_brain,
         observability_repository=observability_repository,
     )
