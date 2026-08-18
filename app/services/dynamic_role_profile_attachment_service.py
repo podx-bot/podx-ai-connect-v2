@@ -8,6 +8,8 @@ conversation.
 """
 from __future__ import annotations
 
+from app.models.session import ConversationStep
+
 
 class DynamicRoleProfileAttachmentService:
     ROLE_MAP = {
@@ -37,25 +39,28 @@ class DynamicRoleProfileAttachmentService:
 
     def process(self, sender_mobile: str, message: str) -> str:
         clean = str(message or "").strip()
-        self._attach_for_intent(sender_mobile, clean)
+        intent_context = self._attach_for_intent(sender_mobile, clean)
+        resume_prompt = self._resume_missing_profile(sender_mobile, intent_context)
+        if resume_prompt is not None:
+            return resume_prompt
         return self._call_delegate(sender_mobile, clean)
 
-    def _attach_for_intent(self, sender_mobile: str, message: str) -> None:
+    def _attach_for_intent(self, sender_mobile: str, message: str):
         try:
             user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
             if not user or int(user.get("registration_complete") or 0) != 1:
-                return
+                return None
 
             decision = self.category_brain.classify(message)
             confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
             if confidence < self.min_confidence:
-                return
+                return None
 
             category = str(getattr(decision, "category", "") or "").upper()
             side = str(getattr(decision, "side", "") or "").upper()
             capability = self.ROLE_MAP.get((category, side))
             if not capability:
-                return
+                return None
 
             has_capability = getattr(self.user_repository, "has_capability", None)
             already_attached = callable(has_capability) and has_capability(sender_mobile, capability)
@@ -66,30 +71,95 @@ class DynamicRoleProfileAttachmentService:
                     source="intent_auto_attach",
                 )
 
-            self._record_profile_plan(sender_mobile, capability)
+            plan = self._record_profile_plan(sender_mobile, capability)
+            return {
+                "capability": capability,
+                "user": user,
+                "plan": plan,
+            }
         except Exception:
             # Capability/profile enrichment must never cause a user message to fail.
-            return
+            return None
 
-    def _record_profile_plan(self, sender_mobile: str, capability: str) -> None:
+    def _record_profile_plan(self, sender_mobile: str, capability: str):
         planner = self.profile_essentials
         sessions = self.session_registry
-        if planner is None or sessions is None:
-            return
+        if planner is None:
+            return None
         try:
             plan = planner.plan_for_user(sender_mobile, capability)
-            session = sessions.get(sender_mobile)
+            if sessions is not None:
+                session = sessions.get(sender_mobile)
+                data = getattr(session, "data", None)
+                if isinstance(data, dict):
+                    data["active_capability"] = capability
+                    data["role_profile_missing_fields"] = list(plan.missing_fields)
+                    data["role_profile_complete"] = bool(plan.complete)
+                    save = getattr(sessions, "save", None)
+                    if callable(save):
+                        save(sender_mobile)
+            return plan
+        except Exception:
+            return None
+
+    def _resume_missing_profile(self, sender_mobile: str, intent_context) -> str | None:
+        """Resume only the first missing durable worker field.
+
+        This bridge deliberately applies only when both the progressive planner
+        and the stateful session registry are present. Other roles remain
+        transaction-scoped and continue directly to their vertical runtime.
+        """
+        if not intent_context or self.session_registry is None:
+            return None
+        if intent_context.get("capability") != "WORKER":
+            return None
+
+        plan = intent_context.get("plan")
+        missing = tuple(getattr(plan, "missing_fields", ()) or ())
+        if not missing:
+            return None
+
+        try:
+            session = self.session_registry.get(sender_mobile)
             data = getattr(session, "data", None)
             if not isinstance(data, dict):
-                return
-            data["active_capability"] = capability
-            data["role_profile_missing_fields"] = list(plan.missing_fields)
-            data["role_profile_complete"] = bool(plan.complete)
-            save = getattr(sessions, "save", None)
+                return None
+
+            user = intent_context.get("user") or {}
+            data["role"] = "WORKER"
+            if user.get("job_category"):
+                data["category"] = user["job_category"]
+            if user.get("experience"):
+                data["experience"] = user["experience"]
+            if user.get("availability"):
+                data["availability"] = user["availability"]
+
+            first = missing[0]
+            if first == "job_category":
+                session.step = ConversationStep.WORKER_CATEGORY
+                prompt = (
+                    "మీకు ఏ పని కావాలో ఎంచుకోండి:\n"
+                    "1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n"
+                    "5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
+                )
+            elif first == "experience":
+                session.step = ConversationStep.WORKER_EXPERIENCE
+                prompt = "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years"
+            elif first == "availability":
+                session.step = ConversationStep.WORKER_AVAILABILITY
+                prompt = "మీ Availability ఎప్పుడు?\n1. Today\n2. Tomorrow\n3. This Week"
+            elif first == "location":
+                session.step = ConversationStep.WORKER_LOCATION
+                prompt = "📍 మీ Worker profileలో Location మాత్రమే కావాలి. WhatsApp Attachment ద్వారా Current Location share చేయండి."
+            else:
+                return None
+
+            save = getattr(self.session_registry, "save", None)
             if callable(save):
                 save(sender_mobile)
+            return prompt
         except Exception:
-            return
+            return None
 
     def _call_delegate(self, sender_mobile: str, message: str) -> str:
         process = getattr(self.delegate, "process", None)

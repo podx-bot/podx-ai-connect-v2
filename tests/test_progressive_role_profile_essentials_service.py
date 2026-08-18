@@ -92,7 +92,7 @@ def test_transaction_scoped_roles_do_not_force_permanent_profile_questions():
         assert plan.missing_fields == ()
 
 
-def test_intent_attachment_records_missing_only_plan_in_session():
+def test_intent_attachment_records_missing_only_plan_and_resumes_first_missing_field():
     users = Users({
         "registration_complete": 1,
         "job_category": "Warehouse",
@@ -111,12 +111,14 @@ def test_intent_attachment_records_missing_only_plan_in_session():
         session_registry=sessions,
     )
 
-    assert service.process("u", "job కావాలి") == "DOWNSTREAM"
+    reply = service.process("u", "job కావాలి")
+    assert reply.startswith("మీ Experience ఎంత?")
     assert "WORKER" in users.capabilities
     assert sessions.session.data["active_capability"] == "WORKER"
     assert sessions.session.data["role_profile_missing_fields"] == ["experience", "availability", "location"]
     assert sessions.session.data["role_profile_complete"] is False
-    assert sessions.saved == ["u"]
+    assert sessions.session.data["category"] == "Warehouse"
+    assert sessions.saved == ["u", "u"]
 
 
 def test_profile_planning_never_blocks_downstream_when_session_shape_is_legacy():
