@@ -15,6 +15,7 @@ from app.services.natural_conversation_orchestrator import NaturalConversationOr
 from app.services.podx_meet_aware_conversation_service import PodxMeetAwareConversationService
 from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
 from app.services.ride_settlement_runtime_service import RideSettlementRuntimeService
+from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
 
 
 def create_app() -> FastAPI:
@@ -44,9 +45,11 @@ def create_app() -> FastAPI:
     container.conversation_service = settlement_runtime
 
     observability_repository = ConversationObservabilityRepository(container.settings.database_path)
+    category_brain = UniversalCategoryFlowBrain()
     orchestrator = NaturalConversationOrchestrator(
         delegate=container.conversation_service,
         observability_repository=observability_repository,
+        category_brain=category_brain,
         handlers={
             "RIDE": settlement_runtime,
             "KYC": kyc_runtime,
@@ -59,6 +62,7 @@ def create_app() -> FastAPI:
             "LEDGER": getattr(container.conversation_service, "ledger_runtime", None),
         },
     )
+    container.universal_category_flow_brain = category_brain
     container.conversation_observability_repository = observability_repository
     container.natural_conversation_orchestrator = orchestrator
 
