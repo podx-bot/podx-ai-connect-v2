@@ -30,6 +30,10 @@ class UniversalRegistrationProfileService:
         clean = str(message or "").strip()
         normalized = clean.lower()
         session = self.session_registry.get(sender_mobile)
+        data = getattr(session, "data", None)
+        if not isinstance(data, dict):
+            data = {}
+            session.data = data
         step_name = str(getattr(session.step, "name", session.step))
 
         # Legacy/in-flight onboarding states migrate forward instead of forcing
@@ -39,13 +43,14 @@ class UniversalRegistrationProfileService:
             if user and int(user.get("registration_complete") or 0) == 1:
                 session.step = ConversationStep.MAIN_MENU
                 return self._reply(sender_mobile, self._open_prompt(user.get("language")))
-            session.data.clear()
+            data.clear()
+            data["entered_mobile"] = sender_mobile
             session.step = ConversationStep.WAITING_LANGUAGE
             return self._reply(sender_mobile, self._language_prompt())
 
         if step_name == "START":
-            session.data.clear()
-            session.data["entered_mobile"] = sender_mobile
+            data.clear()
+            data["entered_mobile"] = sender_mobile
             session.step = ConversationStep.WAITING_LANGUAGE
             return self._reply(sender_mobile, self._language_prompt())
 
@@ -53,28 +58,28 @@ class UniversalRegistrationProfileService:
             language = self.LANGUAGE_MAP.get(normalized)
             if language is None:
                 return self._reply(sender_mobile, self._language_retry())
-            session.data["language"] = language
-            session.data["entered_mobile"] = sender_mobile
+            data["language"] = language
+            data["entered_mobile"] = sender_mobile
             session.step = ConversationStep.WAITING_NAME
             return self._reply(sender_mobile, self._name_prompt(language))
 
         if step_name == "WAITING_NAME":
-            language = session.data.get("language") or "Telugu"
+            language = data.get("language") or "Telugu"
             if len(clean) < 2:
                 return self._reply(sender_mobile, self._name_retry(language))
-            session.data["name"] = clean
+            data["name"] = clean
             session.step = ConversationStep.WAITING_AREA
             return self._reply(sender_mobile, self._area_prompt(language))
 
         if step_name == "WAITING_AREA":
-            language = session.data.get("language") or "Telugu"
+            language = data.get("language") or "Telugu"
             if len(clean) < 2:
                 return self._reply(sender_mobile, self._area_retry(language))
-            session.data["area"] = clean
+            data["area"] = clean
             self.user_repository.create_or_update_registration(
                 whatsapp_mobile=sender_mobile,
                 entered_mobile=sender_mobile,
-                name=session.data["name"],
+                name=data["name"],
                 language=language,
                 area=clean,
             )
@@ -82,10 +87,10 @@ class UniversalRegistrationProfileService:
             return self._reply(sender_mobile, self._complete_prompt(language))
 
         # If this service is reached for an unexpected legacy onboarding state,
-        # delegate safely to a clean language-first restart rather than asking
-        # for capabilities or OTP/mobile re-entry.
-        session.data.clear()
-        session.data["entered_mobile"] = sender_mobile
+        # restart safely at language selection rather than asking for capabilities,
+        # OTP, or typed-mobile re-entry.
+        data.clear()
+        data["entered_mobile"] = sender_mobile
         session.step = ConversationStep.WAITING_LANGUAGE
         return self._reply(sender_mobile, self._language_prompt())
 
