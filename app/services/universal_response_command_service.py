@@ -54,7 +54,6 @@ class UniversalResponseCommandService:
         try:
             return bool(self.context_router.should_consume_as_deal_followup(request, text))
         except Exception:
-            # Routing failures must never break an already-running deal.
             return True
 
     def process_text(self, sender_mobile: str, message: str) -> Optional[str]:
@@ -314,6 +313,23 @@ class UniversalResponseCommandService:
             return "Seller confirmation ఇంకా complete కాలేదు."
         return "Order step save చేశాను."
 
+    def _send_preorder_options(self, buyer: str, request_id: int, seller: str) -> None:
+        sender = getattr(self.notifications, "_send_buttons_or_text", None)
+        if not callable(sender):
+            return
+        try:
+            sender(
+                buyer,
+                "🤔 కొనడానికి ముందు ఇంకేమైనా తెలుసుకోవాలా? Sellerని PODX ద్వారా అడగండి, లేదా Direct Talk ఎంచుకోండి. అన్నీ సరే అయితే Confirm Order చేయండి.",
+                [
+                    {"id": f"FINAL_CONFIRM {request_id} {seller}", "title": "✅ Confirm Order"},
+                    {"id": f"DEAL_QUESTION {request_id} {seller}", "title": "💬 Sellerని అడగండి"},
+                    {"id": f"DIRECT_TALK {request_id} {seller}", "title": "📞 Direct Talk"},
+                ],
+            )
+        except Exception:
+            return
+
     def _save_address(self, buyer: str, request_id: int, seller: str, address: str) -> str:
         request = self.demands.get(request_id)
         if not request:
@@ -323,7 +339,8 @@ class UniversalResponseCommandService:
         if status == "ADDRESS_TOO_SHORT":
             return "Delivery address ఇంకొంచెం పూర్తి వివరంగా పంపండి — House/Street, Area, Town, Pincode."
         if status == "WAITING_FINAL_CONFIRM":
-            return "✅ Address save అయింది. Final Order Summary పంపాను — అన్ని వివరాలు చూసి Confirm Order నొక్కండి లేదా doubt ఉంటే Sellerని అడగండి."
+            self._send_preorder_options(buyer, request_id, seller)
+            return "✅ Address save అయింది. Final Order Summary పంపాను — Confirm Order, Sellerని అడగండి లేదా Direct Talk ఎంచుకోండి."
         if status == "LEAD_NOT_CONFIRMED":
             return "Seller confirmation లేదా Order Continue step ఇంకా complete కాలేదు."
         return "Delivery details save చేశాను."
