@@ -107,7 +107,9 @@ class UniversalCorrectionService:
 
     def _role_value(self, clean: str) -> Optional[str]:
         low = clean.casefold()
-        if re.search(r"(?:^|\D)7(?:\D|$)", low) or any(x in low for x in ("all", "అన్నీ", "అన్ని")):
+        # Match ALL only as a standalone token. This prevents words such as
+        # "actually" from being misread as the All-roles command.
+        if re.search(r"(?:^|\W)(?:7|all)(?:\W|$)", low) or any(x in low for x in ("అన్నీ", "అన్ని")):
             return "ALL"
         found: list[str] = []
         for number, role in self.ROLE_MAP.items():
