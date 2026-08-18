@@ -10,6 +10,7 @@ from app.repositories.driver_kyc_repository import DriverKYCRepository
 from app.repositories.podx_meet_repository import PodxMeetRepository
 from app.services.admin_monitoring_runtime_service import AdminMonitoringRuntimeService
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.domain_complaint_prevention_service import DomainComplaintPreventionService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
 from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
 from app.services.natural_conversation_orchestrator import NaturalConversationOrchestrator
@@ -82,10 +83,20 @@ def create_app() -> FastAPI:
     )
     container.end_to_end_app_flow_service = app_flow
 
-    # Final UX safety net: never silently drop a request and never trap a user in
-    # the same unresolved bot prompt. Domain state remains owned by app_flow.
-    quality_guard = RuntimeComplaintPreventionService(
+    # Domain complaint-prevention layer: enforce completion-time guarantees for
+    # jobs, commerce, services, mobility, freelance, RFQ and support while the
+    # underlying business state remains owned by app_flow.
+    domain_guard = DomainComplaintPreventionService(
         delegate=app_flow,
+        category_brain=category_brain,
+        observability_repository=observability_repository,
+    )
+    container.domain_complaint_prevention_service = domain_guard
+
+    # Final cross-domain UX safety net: never silently drop a request and never
+    # trap a user in the same unresolved bot prompt.
+    quality_guard = RuntimeComplaintPreventionService(
+        delegate=domain_guard,
         category_brain=category_brain,
         observability_repository=observability_repository,
     )
