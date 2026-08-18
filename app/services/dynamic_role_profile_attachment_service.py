@@ -19,11 +19,21 @@ class DynamicRoleProfileAttachmentService:
         ("JOBS", "PROVIDER"): "EMPLOYER",
     }
 
-    def __init__(self, delegate, category_brain, user_repository, min_confidence: float = 0.75) -> None:
+    def __init__(
+        self,
+        delegate,
+        category_brain,
+        user_repository,
+        min_confidence: float = 0.75,
+        profile_essentials=None,
+        session_registry=None,
+    ) -> None:
         self.delegate = delegate
         self.category_brain = category_brain
         self.user_repository = user_repository
         self.min_confidence = float(min_confidence)
+        self.profile_essentials = profile_essentials
+        self.session_registry = session_registry
 
     def process(self, sender_mobile: str, message: str) -> str:
         clean = str(message or "").strip()
@@ -48,16 +58,37 @@ class DynamicRoleProfileAttachmentService:
                 return
 
             has_capability = getattr(self.user_repository, "has_capability", None)
-            if callable(has_capability) and has_capability(sender_mobile, capability):
-                return
+            already_attached = callable(has_capability) and has_capability(sender_mobile, capability)
+            if not already_attached:
+                self.user_repository.add_capability(
+                    sender_mobile,
+                    capability,
+                    source="intent_auto_attach",
+                )
 
-            self.user_repository.add_capability(
-                sender_mobile,
-                capability,
-                source="intent_auto_attach",
-            )
+            self._record_profile_plan(sender_mobile, capability)
         except Exception:
-            # Capability enrichment must never cause a user message to fail.
+            # Capability/profile enrichment must never cause a user message to fail.
+            return
+
+    def _record_profile_plan(self, sender_mobile: str, capability: str) -> None:
+        planner = self.profile_essentials
+        sessions = self.session_registry
+        if planner is None or sessions is None:
+            return
+        try:
+            plan = planner.plan_for_user(sender_mobile, capability)
+            session = sessions.get(sender_mobile)
+            data = getattr(session, "data", None)
+            if not isinstance(data, dict):
+                return
+            data["active_capability"] = capability
+            data["role_profile_missing_fields"] = list(plan.missing_fields)
+            data["role_profile_complete"] = bool(plan.complete)
+            save = getattr(sessions, "save", None)
+            if callable(save):
+                save(sender_mobile)
+        except Exception:
             return
 
     def _call_delegate(self, sender_mobile: str, message: str) -> str:
