@@ -1,0 +1,1 @@
+Face Welcome V1 is consent-first and optional. Universal registration does not require a face photo. Enrollment happens only when a customer opts in at a participating business.
