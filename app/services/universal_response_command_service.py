@@ -69,6 +69,7 @@ class UniversalResponseCommandService:
             (r"^SELLER_DECLINE\s+(\d+)\s+(\S+)\s*$", lambda m: self._seller_decision(sender_mobile, int(m.group(1)), m.group(2), False)),
             (r"^DEAL_CONFIRM\s+(\d+)\s+(\S+)\s*$", lambda m: self._deal_confirm(sender_mobile, int(m.group(1)), m.group(2))),
             (r"^DEAL_CHANGE\s+(\d+)\s+(\S+)\s*$", lambda m: self._deal_change(sender_mobile, int(m.group(1)), m.group(2))),
+            (r"^DEAL_QUESTION\s+(\d+)\s+(\S+)\s*$", lambda m: self._deal_question(sender_mobile, int(m.group(1)), m.group(2))),
             (r"^ORDER_CONTINUE\s+(\d+)\s+(\S+)\s*$", lambda m: self._start_order(sender_mobile, int(m.group(1)), m.group(2))),
             (r"^DIRECT_TALK\s+(\d+)\s+(\S+)\s*$", lambda m: self._direct_talk(sender_mobile, int(m.group(1)), m.group(2))),
             (r"^FINAL_CONFIRM\s+(\d+)\s+(\S+)\s*$", lambda m: self._final_order(sender_mobile, int(m.group(1)), m.group(2), True)),
@@ -243,7 +244,7 @@ class UniversalResponseCommandService:
             return "ఈ deal details దొరకలేదు."
         result = self.deals.confirm(request, buyer, seller)
         if result.get("status") == "DEAL_CONFIRMED":
-            return "✅ Deal confirm అయింది. ఇప్పుడు మాత్రమే Order Continue / Direct Talk options active అయ్యాయి."
+            return "✅ Deal confirm అయింది. Order Continue / Direct Talkకి వెళ్లవచ్చు; కొనడానికి ముందు doubt ఉంటే Sellerని అడగండి option కూడా ఉపయోగించవచ్చు."
         if result.get("status") == "DEAL_NOT_READY":
             return "Deal summary ఇంకా complete కాలేదు. Seller details/clarification పూర్తయ్యాక confirm చేయండి."
         return "ఈ deal మీకు సంబంధించినది కాదు."
@@ -253,6 +254,24 @@ class UniversalResponseCommandService:
         if not request or self.deals is None:
             return "ఈ deal details దొరకలేదు."
         return self.deals.ask_for_change(request, buyer, seller)
+
+    def _deal_question(self, buyer: str, request_id: int, seller: str) -> str:
+        request = self.demands.get(request_id)
+        if not request or self.deals is None:
+            return "ఈ deal details దొరకలేదు."
+        deal = self.deals.repository.get(request_id, seller)
+        if not deal or str(deal.get("buyer_user_id")) != str(buyer):
+            return "ఈ deal మీకు సంబంధించినది కాదు."
+        status = str(deal.get("status") or "")
+        if status == "WAITING_BUYER_CHANGE":
+            return "💬 మీ doubt మీ మాటల్లో text/voiceలో పంపండి. PODX sellerకి మాత్రమే relay చేస్తుంది."
+        if status not in {"CONFIRMED", "WAITING_BUYER_CONFIRM"}:
+            return "ఈ deal ఇప్పుడు seller doubt verificationకి readyగా లేదు."
+        self.deals.repository.mark_waiting_buyer_change(request_id, seller)
+        return (
+            "💬 కొనడానికి ముందు ఇంకేమైనా తెలుసుకోవాలా? మీ doubt మీ మాటల్లో text/voiceలో పంపండి. "
+            "PODX sellerకి relevant question మాత్రమే relay చేసి answer తెస్తుంది. Contact details privateగానే ఉంటాయి."
+        )
 
     def _request_with_confirmed_deal(self, request: dict, seller: str) -> dict:
         enriched = dict(request)
@@ -304,7 +323,7 @@ class UniversalResponseCommandService:
         if status == "ADDRESS_TOO_SHORT":
             return "Delivery address ఇంకొంచెం పూర్తి వివరంగా పంపండి — House/Street, Area, Town, Pincode."
         if status == "WAITING_FINAL_CONFIRM":
-            return "✅ Address save అయింది. Final Order Summary పంపాను — అన్ని వివరాలు చూసి Confirm Order నొక్కండి."
+            return "✅ Address save అయింది. Final Order Summary పంపాను — అన్ని వివరాలు చూసి Confirm Order నొక్కండి లేదా doubt ఉంటే Sellerని అడగండి."
         if status == "LEAD_NOT_CONFIRMED":
             return "Seller confirmation లేదా Order Continue step ఇంకా complete కాలేదు."
         return "Delivery details save చేశాను."
@@ -313,6 +332,8 @@ class UniversalResponseCommandService:
         request = self.demands.get(request_id)
         if not request:
             return "ఆ PODX request దొరకలేదు."
+        if accepted and self.deals is not None and not self.deals.is_confirmed(request_id, seller):
+            return "💬 Seller doubt/clarification ఇంకా pendingలో ఉంది. Answer verify చేసి Deal OK చేసిన తర్వాత Confirm Order చేయండి."
         request = self._request_with_confirmed_deal(request, seller)
         status = self.notifications.final_confirm(request, buyer, seller, accepted).get("status")
         if status == "CONVERTED":
@@ -362,7 +383,7 @@ class UniversalResponseCommandService:
             text.lower().strip().startswith(prefix)
             for prefix in (
                 "buy_interested", "buy_not_interested", "seller_confirm", "seller_decline",
-                "deal_confirm", "deal_change", "order_continue", "direct_talk", "final_confirm", "final_cancel", "interested",
+                "deal_confirm", "deal_change", "deal_question", "order_continue", "direct_talk", "final_confirm", "final_cancel", "interested",
                 "not_interested", "confirm", "decline", "reject", "cancel", "contact", "done",
                 "status", "menu", "help", "reset",
             )
