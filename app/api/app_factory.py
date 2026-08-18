@@ -20,6 +20,7 @@ from app.services.podx_meet_runtime_service import PodxMeetRuntimeService
 from app.services.ride_settlement_runtime_service import RideSettlementRuntimeService
 from app.services.runtime_complaint_prevention_service import RuntimeComplaintPreventionService
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
+from app.services.universal_correction_service import UniversalCorrectionService
 
 
 def create_app() -> FastAPI:
@@ -75,8 +76,6 @@ def create_app() -> FastAPI:
     container.admin_monitoring_service = monitoring
     container.admin_monitoring_runtime_service = admin_runtime
 
-    # Application invariant: onboarding and active human/deal state always win
-    # before admin/category/module routing.
     app_flow = EndToEndAppFlowService(
         inner_service=admin_runtime,
         base_conversation=container.base_conversation_service,
@@ -84,10 +83,6 @@ def create_app() -> FastAPI:
     )
     container.end_to_end_app_flow_service = app_flow
 
-    # Testing/recovery invariant: explicit Fresh Test can snapshot profile data,
-    # pause old active deal state and re-enter onboarding without deleting history.
-    # Plain Hi on a stale active deal asks Continue vs Fresh Test instead of being
-    # consumed as a buyer/seller clarification response.
     fresh_test = FreshTestResetService(
         delegate=app_flow,
         user_repository=container.user_repository,
@@ -95,18 +90,24 @@ def create_app() -> FastAPI:
     )
     container.fresh_test_reset_service = fresh_test
 
-    # Domain complaint-prevention layer: enforce completion-time guarantees for
-    # jobs, commerce, services, mobility, freelance, RFQ and support while the
-    # underlying business state remains owned by app_flow.
-    domain_guard = DomainComplaintPreventionService(
+    # Universal edit/correction gate. A user may correct a recent answer in
+    # natural language before category routing locks onto a new intent. Durable
+    # profile/role edits are applied here; transaction edits fall through to the
+    # active state-first business runtime so dependent values can be recalculated.
+    correction = UniversalCorrectionService(
         delegate=fresh_test,
+        user_repository=container.user_repository,
+        session_registry=getattr(container.base_conversation_service, "session_registry", None),
+    )
+    container.universal_correction_service = correction
+
+    domain_guard = DomainComplaintPreventionService(
+        delegate=correction,
         category_brain=category_brain,
         observability_repository=observability_repository,
     )
     container.domain_complaint_prevention_service = domain_guard
 
-    # Final cross-domain UX safety net: never silently drop a request and never
-    # trap a user in the same unresolved bot prompt.
     quality_guard = RuntimeComplaintPreventionService(
         delegate=domain_guard,
         category_brain=category_brain,
