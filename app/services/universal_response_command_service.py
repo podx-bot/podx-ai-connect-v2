@@ -93,18 +93,6 @@ class UniversalResponseCommandService:
             return self._legacy_consent_for_request(sender_mobile, int(explicit_decline.group(1)), False)
 
         if self.deals is not None and not self._looks_like_command(text):
-            seller_deal = self.deals.pending_for_seller(sender_mobile)
-            if seller_deal:
-                request = self.demands.get(int(seller_deal["request_id"]))
-                if request and self._same_deal_context(request, text):
-                    reply = self.deals.consume_seller_text(
-                        request,
-                        str(seller_deal["buyer_user_id"]),
-                        sender_mobile,
-                        text,
-                    )
-                    if reply is not None:
-                        return reply
             buyer_change = self.deals.pending_for_buyer_change(sender_mobile)
             if buyer_change:
                 request = self.demands.get(int(buyer_change["request_id"]))
@@ -117,6 +105,20 @@ class UniversalResponseCommandService:
                     )
                     if reply is not None:
                         return reply
+
+            seller_deal = self.deals.pending_for_seller(sender_mobile)
+            if seller_deal:
+                request = self.demands.get(int(seller_deal["request_id"]))
+                if request and self._same_deal_context(request, text):
+                    reply = self.deals.consume_seller_text(
+                        request,
+                        str(seller_deal["buyer_user_id"]),
+                        sender_mobile,
+                        text,
+                    )
+                    if reply is not None:
+                        return reply
+
             buyer_summary = self.deals.pending_for_buyer_summary(sender_mobile)
             if buyer_summary and self._looks_like_deal_change(text):
                 request = self.demands.get(int(buyer_summary["request_id"]))
