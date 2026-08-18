@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from app.core.container import AppContainer
+from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
 from app.services.universal_aware_conversation_service import UniversalAwareConversationService
 from app.services.universal_commerce_response_command_service import UniversalCommerceResponseCommandService
 
 
 class UniversalCommerceAppContainer(AppContainer):
-    """AppContainer with Universal Commerce Conversation Engine V1 enabled."""
+    """AppContainer with universal commerce + end-to-end app routing enabled."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -18,9 +19,7 @@ class UniversalCommerceAppContainer(AppContainer):
             notification_repository=self.universal_notification_repository,
         )
 
-        # Rebuild the universal-aware layer once so every text/voice commerce
-        # message enters the state-first engine before legacy match/order flows.
-        self.conversation_service = UniversalAwareConversationService(
+        universal_conversation = UniversalAwareConversationService(
             response_commands=self.universal_response_command_service,
             live_capture=self.universal_live_capture_service,
             image_service=self.universal_image_service,
@@ -35,3 +34,7 @@ class UniversalCommerceAppContainer(AppContainer):
             event_provider_runtime=self.event_provider_runtime_service,
             ride_runtime=self.ride_runtime_service,
         )
+
+        # One application-level entry point: profile onboarding first, then any
+        # active human/deal state, and only then category-specific intelligence.
+        self.conversation_service = EndToEndAppFlowService(universal_conversation)
