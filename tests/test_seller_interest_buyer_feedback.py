@@ -1,4 +1,4 @@
-from app.services.universal_response_command_service import UniversalResponseCommandService
+from app.services.reliable_universal_commerce_response_command_service import ReliableUniversalCommerceResponseCommandService
 
 
 class _Demands:
@@ -23,7 +23,7 @@ class _Repo:
 
 
 def test_buyer_is_not_told_seller_was_notified_when_delivery_failed():
-    service = UniversalResponseCommandService(_Demands(), _Notifications("SELLER_NOTIFICATION_FAILED"), _Repo())
+    service = ReliableUniversalCommerceResponseCommandService(_Demands(), _Notifications("SELLER_NOTIFICATION_FAILED"), _Repo())
     service.deals = None
     reply = service._buyer_interest("buyer", 9, "seller")
     assert "delivery" in reply.lower() or "పంపలేకపోయాను" in reply
