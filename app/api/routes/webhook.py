@@ -52,6 +52,15 @@ def _process_user_text(container, sender_mobile: str, message: str) -> str:
         visible_log(f"JOB LIFECYCLE COMMAND: sender={sender_mobile} text={message}")
         return lifecycle_reply
 
+    insurance_service = getattr(container, "insurance_assistant_service", None)
+    if insurance_service is not None and insurance_service.is_insurance_message(message):
+        insurance_reply = insurance_service.answer(message)
+        visible_log(
+            f"INSURANCE ASSISTANT: sender={sender_mobile} "
+            f"status={insurance_reply.get('status')} next={insurance_reply.get('next_action')}"
+        )
+        return insurance_reply["answer"]
+
     return container.conversation_service.process(
         sender_mobile=sender_mobile,
         message=message,
@@ -183,182 +192,90 @@ async def receive_webhook(request: Request) -> dict:
             })
         except Exception as error:
             visible_log(f"WHATSAPP TEXT PROCESSING ERROR: {type(error).__name__}: {error}")
-            _recover_user(container, incoming.sender_mobile, "text")
-
-    for incoming in audio_messages:
-        try:
-            visible_log(
-                f"WHATSAPP AUDIO RECEIVED: sender={incoming.sender_mobile} "
-                f"id={incoming.provider_message_id} media_id={incoming.media_id} "
-                f"mime={incoming.mime_type} voice={incoming.is_voice}"
-            )
-            if container.inbound_message_repository.exists(incoming.provider_message_id):
-                visible_log(f"WHATSAPP DUPLICATE AUDIO SKIPPED: id={incoming.provider_message_id}")
-                continue
-            container.inbound_message_repository.save(
-                provider_message_id=incoming.provider_message_id,
-                sender_mobile=incoming.sender_mobile,
-                message_text=f"AUDIO:{incoming.media_id}",
-            )
-            media_result = container.whatsapp_service.download_media(incoming.media_id)
-            if not media_result.get("success"):
-                visible_log(f"WHATSAPP AUDIO DOWNLOAD FAILED: sender={incoming.sender_mobile} result={media_result}")
-                reply_text = "🎙️ మీ voice message తీసుకోలేకపోయాను. దయచేసి చిన్న voice note మళ్లీ పంపండి లేదా textలో పంపండి."
-                transcript = None
-            else:
-                transcription = container.voice_assistant_service.transcribe(
-                    audio_bytes=media_result["content"],
-                    mime_type=media_result.get("mime_type") or incoming.mime_type,
-                )
-                if not transcription.get("success"):
-                    visible_log(
-                        "GEMINI VOICE TRANSCRIPTION FAILED: "
-                        f"sender={incoming.sender_mobile} status={transcription.get('status')} "
-                        f"http={transcription.get('http_status')}"
-                    )
-                    reply_text = "🎙️ మీ మాట స్పష్టంగా అర్థం కాలేదు. దయచేసి మళ్లీ చిన్నగా చెప్పండి లేదా textలో పంపండి."
-                    transcript = None
-                else:
-                    transcript = container.voice_assistant_service.normalize_spoken_choice(transcription["transcript"])
-                    visible_log(f"GEMINI VOICE TRANSCRIPT: sender={incoming.sender_mobile} transcript={transcript}")
-                    reply_text = _process_user_text(container, incoming.sender_mobile, transcript)
-
-            send_result = container.whatsapp_service.send_text_message(
-                recipient_mobile=incoming.sender_mobile,
-                message=reply_text,
-            )
-            visible_log(f"WHATSAPP AUDIO TEXT REPLY RESULT: sender={incoming.sender_mobile} result={send_result}")
-            voice_send_result = None
-            if transcript is not None:
-                voice_send_result = _send_spoken_reply(container, incoming.sender_mobile, reply_text)
             replies.append({
-                "message_type": "audio",
+                "message_type": "text",
                 "sender_mobile": incoming.sender_mobile,
-                "transcript": transcript,
-                "reply": reply_text,
-                "send_result": send_result,
-                "voice_send_result": voice_send_result,
+                "error": str(error),
+                "recovery": _recover_user(container, incoming.sender_mobile, "text"),
             })
-        except Exception as error:
-            visible_log(f"WHATSAPP AUDIO PROCESSING ERROR: {type(error).__name__}: {error}")
-            _recover_user(container, incoming.sender_mobile, "audio")
 
     for incoming in location_messages:
         try:
-            visible_log(
-                f"WHATSAPP LOCATION RECEIVED: sender={incoming.sender_mobile} "
-                f"latitude={incoming.latitude} longitude={incoming.longitude}"
-            )
             if container.inbound_message_repository.exists(incoming.provider_message_id):
                 visible_log(f"WHATSAPP DUPLICATE LOCATION SKIPPED: id={incoming.provider_message_id}")
                 continue
             container.inbound_message_repository.save(
                 provider_message_id=incoming.provider_message_id,
                 sender_mobile=incoming.sender_mobile,
-                message_text=f"LOCATION:{incoming.latitude:.7f},{incoming.longitude:.7f}",
+                message_text=f"LOCATION {incoming.latitude},{incoming.longitude}",
             )
-
-            session = container.session_registry.get(incoming.sender_mobile)
-            if session.step == ConversationStep.WORKER_LOCATION:
-                worker_category = session.data.get("category")
-                worker_experience = session.data.get("experience")
-                worker_availability = session.data.get("availability")
-                container.user_repository.save_location(
-                    whatsapp_mobile=incoming.sender_mobile,
-                    latitude=incoming.latitude,
-                    longitude=incoming.longitude,
-                    location_name=incoming.name,
-                    location_address=incoming.address,
-                )
-                container.user_repository.complete_worker_registration(incoming.sender_mobile)
-                session.step = ConversationStep.MAIN_MENU
-                session.data.clear()
-                container.session_registry.save(incoming.sender_mobile)
-                reply_text = (
-                    "🎉 Worker Registration పూర్తైంది!\n\n"
-                    f"పని: {worker_category}\nExperience: {worker_experience}\n"
-                    f"Availability: {worker_availability}\n📍 Location కూడా save అయింది.\n\n"
-                    "ఇప్పటి నుండి మీకు దగ్గరలో వచ్చే Jobs WhatsAppలో పంపబడతాయి."
-                )
-            elif session.step == ConversationStep.EMPLOYER_LOCATION:
-                job = container.user_repository.save_employer_job_location(
-                    whatsapp_mobile=incoming.sender_mobile,
-                    latitude=incoming.latitude,
-                    longitude=incoming.longitude,
-                    location_name=incoming.name,
-                    location_address=incoming.address,
-                )
-                session.step = ConversationStep.MAIN_MENU
-                session.data.clear()
-                container.session_registry.save(incoming.sender_mobile)
-                if job is None:
-                    visible_log(f"JOB MATCHING SKIPPED: sender={incoming.sender_mobile} reason=no_draft_job")
-                    reply_text = "⚠️ Job details దొరకలేదు. Hi పంపి Employer workflowను మళ్లీ ప్రారంభించండి."
-                else:
-                    match_result = container.job_matching_service.match_and_notify(job)
-                    visible_log(
-                        "JOB MATCHING RESULT: "
-                        f"job_id={job['id']} service={job['service']} "
-                        f"candidates={match_result['candidate_count']} matched={match_result['matched_count']} "
-                        f"notified={match_result['notified_count']} skipped_self={match_result['skipped_self_count']}"
-                    )
-                    reply_text = (
-                        "✅ మీ Job Location save అయింది.\n\n"
-                        f"Job ID: #{job['id']}\nపని: {job['service']}\n"
-                        f"Requirement: {job['requirement']}\nWorkers required: {job.get('required_workers') or 1}\n"
-                        f"📍 Nearby matches: {match_result['matched_count']}\n"
-                        f"🔔 Notifications sent: {match_result['notified_count']}\n\n"
-                        f"Live status చూడడానికి: STATUS {job['id']}"
-                    )
-            else:
-                container.user_repository.save_location(
-                    whatsapp_mobile=incoming.sender_mobile,
-                    latitude=incoming.latitude,
-                    longitude=incoming.longitude,
-                    location_name=incoming.name,
-                    location_address=incoming.address,
-                )
-                tracking_reply = container.job_lifecycle_service.handle_location(
-                    worker_mobile=incoming.sender_mobile,
-                    latitude=incoming.latitude,
-                    longitude=incoming.longitude,
-                )
-                if tracking_reply is not None:
-                    visible_log(
-                        f"JOB TRACKING LOCATION: worker={incoming.sender_mobile} "
-                        f"latitude={incoming.latitude} longitude={incoming.longitude}"
-                    )
-                    reply_text = tracking_reply
-                else:
-                    reply_text = (
-                        "✅ మీ location విజయవంతంగా save అయింది.\n"
-                        f"📍 Latitude: {incoming.latitude:.6f}\n"
-                        f"📍 Longitude: {incoming.longitude:.6f}\n\n"
-                        "Nearby jobs మరియు workers matching కోసం ఈ location ఉపయోగిస్తాం."
-                    )
-
+            location_reply = container.conversation_service.process_location(
+                sender_mobile=incoming.sender_mobile,
+                latitude=incoming.latitude,
+                longitude=incoming.longitude,
+                name=incoming.name,
+                address=incoming.address,
+            )
             send_result = container.whatsapp_service.send_text_message(
                 recipient_mobile=incoming.sender_mobile,
-                message=reply_text,
+                message=location_reply,
             )
-            visible_log(f"WHATSAPP LOCATION SEND RESULT: sender={incoming.sender_mobile} result={send_result}")
             replies.append({
                 "message_type": "location",
                 "sender_mobile": incoming.sender_mobile,
-                "latitude": incoming.latitude,
-                "longitude": incoming.longitude,
-                "reply": reply_text,
+                "reply": location_reply,
                 "send_result": send_result,
             })
         except Exception as error:
             visible_log(f"WHATSAPP LOCATION PROCESSING ERROR: {type(error).__name__}: {error}")
-            _recover_user(container, incoming.sender_mobile, "location")
+            replies.append({
+                "message_type": "location",
+                "sender_mobile": incoming.sender_mobile,
+                "error": str(error),
+                "recovery": _recover_user(container, incoming.sender_mobile, "location"),
+            })
 
-    return {
-        "status": "processed",
-        "incoming_text_count": len(text_messages),
-        "incoming_audio_count": len(audio_messages),
-        "incoming_location_count": len(location_messages),
-        "delivery_status_count": len(statuses),
-        "replies": replies,
-    }
+    for incoming in audio_messages:
+        try:
+            if container.inbound_message_repository.exists(incoming.provider_message_id):
+                visible_log(f"WHATSAPP DUPLICATE AUDIO SKIPPED: id={incoming.provider_message_id}")
+                continue
+            container.inbound_message_repository.save(
+                provider_message_id=incoming.provider_message_id,
+                sender_mobile=incoming.sender_mobile,
+                message_text="[voice message]",
+            )
+            media_result = container.whatsapp_service.download_media(incoming.media_id)
+            if not media_result.get("success"):
+                raise RuntimeError(f"WhatsApp audio download failed: {media_result.get('status')}")
+            transcription = container.voice_assistant_service.transcribe(
+                audio_bytes=media_result["content"],
+                mime_type=media_result.get("mime_type") or incoming.mime_type,
+            )
+            if not transcription.get("success"):
+                raise RuntimeError(f"Voice transcription failed: {transcription.get('status')}")
+            normalized = container.voice_assistant_service.normalize_spoken_choice(transcription["transcript"])
+            reply_text = _process_user_text(container, incoming.sender_mobile, normalized)
+            text_send_result = container.whatsapp_service.send_text_message(
+                recipient_mobile=incoming.sender_mobile,
+                message=reply_text,
+            )
+            voice_send_result = _send_spoken_reply(container, incoming.sender_mobile, reply_text)
+            replies.append({
+                "message_type": "audio",
+                "sender_mobile": incoming.sender_mobile,
+                "transcript": normalized,
+                "reply": reply_text,
+                "text_send_result": text_send_result,
+                "voice_send_result": voice_send_result,
+            })
+        except Exception as error:
+            visible_log(f"WHATSAPP AUDIO PROCESSING ERROR: {type(error).__name__}: {error}")
+            replies.append({
+                "message_type": "audio",
+                "sender_mobile": incoming.sender_mobile,
+                "error": str(error),
+                "recovery": _recover_user(container, incoming.sender_mobile, "audio"),
+            })
+
+    return {"status": "processed", "replies": replies}
