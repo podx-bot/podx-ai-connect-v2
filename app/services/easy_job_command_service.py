@@ -121,15 +121,18 @@ class EasyJobCommandService:
         return None
 
     def _is_registered_user(self, sender_mobile: str) -> bool:
+        finder = getattr(self.repository, "find_user", None)
+        if not callable(finder):
+            # Legacy repositories/tests predate registration-aware shortcut gating.
+            # Preserve their historical behavior; production JobLifecycleRepository
+            # exposes find_user(), so real onboarding still fails closed.
+            return True
         try:
-            row = self.repository.database.fetchone(
-                "SELECT registration_complete FROM users WHERE whatsapp_mobile=?",
-                (sender_mobile,),
-            )
-            return bool(row and int(row["registration_complete"] or 0) == 1)
+            row = finder(sender_mobile)
+            return bool(row and int(row.get("registration_complete") or 0) == 1)
         except Exception:
-            # Shortcut commands are optional enrichment. If registration state
-            # cannot be proven, fail closed and let the main conversation own it.
+            # In production, an unreadable registration state must never let a
+            # historical job shortcut bypass onboarding.
             return False
 
     def _latest_pending_invitation(self, worker_mobile: str) -> Optional[int]:
