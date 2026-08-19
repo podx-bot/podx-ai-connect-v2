@@ -56,6 +56,12 @@ class EasyJobCommandService:
         clean = " ".join(str(message).strip().split())
         normalized = clean.lower()
 
+        # Registration/onboarding owns short answers such as 1/2/yes/no. Fresh
+        # Test deliberately preserves historical job rows, so an old pending job
+        # must never steal a language/name/area answer from either text or voice.
+        if not self._is_registered_user(sender_mobile):
+            return None
+
         if not self._could_be_easy_job_command(normalized):
             return None
 
@@ -113,6 +119,21 @@ class EasyJobCommandService:
         ):
             return self.lifecycle_service.process_text(sender_mobile, f"COMPLETE {job_id}")
         return None
+
+    def _is_registered_user(self, sender_mobile: str) -> bool:
+        finder = getattr(self.repository, "find_user", None)
+        if not callable(finder):
+            # Legacy repositories/tests predate registration-aware shortcut gating.
+            # Preserve their historical behavior; production JobLifecycleRepository
+            # exposes find_user(), so real onboarding still fails closed.
+            return True
+        try:
+            row = finder(sender_mobile)
+            return bool(row and int(row.get("registration_complete") or 0) == 1)
+        except Exception:
+            # In production, an unreadable registration state must never let a
+            # historical job shortcut bypass onboarding.
+            return False
 
     def _latest_pending_invitation(self, worker_mobile: str) -> Optional[int]:
         row = self.repository.database.fetchone(
