@@ -22,16 +22,7 @@ class DynamicRoleProfileAttachmentService:
         ("JOBS", "PROVIDER"): "EMPLOYER",
     }
 
-    def __init__(
-        self,
-        delegate,
-        category_brain,
-        user_repository,
-        min_confidence: float = 0.75,
-        profile_essentials=None,
-        session_registry=None,
-        smart_job_message_service=None,
-    ) -> None:
+    def __init__(self, delegate, category_brain, user_repository, min_confidence: float = 0.75, profile_essentials=None, session_registry=None, smart_job_message_service=None) -> None:
         self.delegate = delegate
         self.category_brain = category_brain
         self.user_repository = user_repository
@@ -54,35 +45,22 @@ class DynamicRoleProfileAttachmentService:
             user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
             if not user or int(user.get("registration_complete") or 0) != 1:
                 return None
-
             decision = self.category_brain.classify(message)
             confidence = float(getattr(decision, "confidence", 0.0) or 0.0)
             if confidence < self.min_confidence:
                 return None
-
             category = str(getattr(decision, "category", "") or "").upper()
             side = str(getattr(decision, "side", "") or "").upper()
             capability = self.ROLE_MAP.get((category, side))
             if not capability:
                 return None
-
             has_capability = getattr(self.user_repository, "has_capability", None)
             already_attached = callable(has_capability) and has_capability(sender_mobile, capability)
             if not already_attached:
-                self.user_repository.add_capability(
-                    sender_mobile,
-                    capability,
-                    source="intent_auto_attach",
-                )
-
+                self.user_repository.add_capability(sender_mobile, capability, source="intent_auto_attach")
             plan = self._record_profile_plan(sender_mobile, capability)
-            return {
-                "capability": capability,
-                "user": user,
-                "plan": plan,
-            }
+            return {"capability": capability, "user": user, "plan": plan}
         except Exception:
-            # Capability/profile enrichment must never cause a user message to fail.
             return None
 
     def _record_profile_plan(self, sender_mobile: str, capability: str):
@@ -107,17 +85,7 @@ class DynamicRoleProfileAttachmentService:
             return None
 
     def _prefill_worker_slots(self, sender_mobile: str, message: str, intent_context) -> None:
-        """Capture worker slots already present in the same natural-language request.
-
-        The live intent wrapper previously stopped at the first missing worker field,
-        which meant a request such as "Catering పని కావాలి, 2 years experience,
-        రేపటి నుంచి" still reopened the category/experience/availability menus.
-        This bridge reuses the deterministic SmartJobMessageService before the
-        missing-only gate, so only genuinely missing fields are asked.
-        """
-        if not intent_context or intent_context.get("capability") != "WORKER":
-            return
-        if self.session_registry is None:
+        if not intent_context or intent_context.get("capability") != "WORKER" or self.session_registry is None:
             return
         try:
             details = self.smart_job_message_service.extract(message)
@@ -125,55 +93,44 @@ class DynamicRoleProfileAttachmentService:
             data = getattr(session, "data", None)
             if not isinstance(data, dict):
                 return
-
             user = intent_context.get("user") or {}
             data["role"] = "WORKER"
             category = details.get("category") or user.get("job_category") or data.get("category")
             experience = details.get("experience") or user.get("experience") or data.get("experience")
             availability = details.get("availability") or user.get("availability") or data.get("availability")
-
             if category:
                 data["category"] = category
             if experience:
                 data["experience"] = experience
             if availability:
                 data["availability"] = availability
-
-            # Once all durable non-location worker slots are known, persist them
-            # immediately so a restart cannot lose the natural-language capture.
             save_worker = getattr(self.user_repository, "save_worker_profile", None)
             if category and experience and availability and callable(save_worker):
-                save_worker(
-                    whatsapp_mobile=sender_mobile,
-                    category=category,
-                    experience=experience,
-                    availability=availability,
-                )
+                save_worker(whatsapp_mobile=sender_mobile, category=category, experience=experience, availability=availability)
                 refreshed = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
                 if refreshed:
                     intent_context["user"] = refreshed
                 intent_context["plan"] = self._record_profile_plan(sender_mobile, "WORKER")
-
             save_session = getattr(self.session_registry, "save", None)
             if callable(save_session):
                 save_session(sender_mobile)
         except Exception:
-            # Slot extraction is enrichment only; never drop the user's request.
             return
 
     def _resume_missing_profile(self, sender_mobile: str, intent_context) -> str | None:
-        """Resume only the first genuinely missing durable worker field."""
-        if not intent_context or self.session_registry is None:
-            return None
-        if intent_context.get("capability") != "WORKER":
-            return None
+        """Resume only the first genuinely missing durable worker field.
 
+        Category discovery is deliberately open-ended: examples and fixed menus can
+        anchor users and classifiers to a small taxonomy. PODX asks for the user's
+        own words, then the intent/schema layer classifies the answer dynamically.
+        """
+        if not intent_context or self.session_registry is None or intent_context.get("capability") != "WORKER":
+            return None
         try:
             session = self.session_registry.get(sender_mobile)
             data = getattr(session, "data", None)
             if not isinstance(data, dict):
                 return None
-
             user = intent_context.get("user") or {}
             data["role"] = "WORKER"
             if user.get("job_category") and not data.get("category"):
@@ -182,7 +139,6 @@ class DynamicRoleProfileAttachmentService:
                 data["experience"] = user["experience"]
             if user.get("availability") and not data.get("availability"):
                 data["availability"] = user["availability"]
-
             missing = []
             if not data.get("category"):
                 missing.append("job_category")
@@ -192,20 +148,14 @@ class DynamicRoleProfileAttachmentService:
                 missing.append("availability")
             if user.get("latitude") is None or user.get("longitude") is None:
                 missing.append("location")
-
             data["role_profile_missing_fields"] = list(missing)
             data["role_profile_complete"] = not missing
             if not missing:
                 return None
-
             first = missing[0]
             if first == "job_category":
                 session.step = ConversationStep.WORKER_CATEGORY
-                prompt = (
-                    "మీకు ఏ పని కావాలో ఎంచుకోండి:\n"
-                    "1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n"
-                    "5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
-                )
+                prompt = "మీకు ఏ పని కావాలో మీ మాటల్లో చెప్పండి — voiceగా లేదా textగా."
             elif first == "experience":
                 session.step = ConversationStep.WORKER_EXPERIENCE
                 prompt = "మీ Experience ఎంత?\n1. Fresher\n2. 1-2 Years\n3. 3-5 Years\n4. 5+ Years"
@@ -217,7 +167,6 @@ class DynamicRoleProfileAttachmentService:
                 prompt = "📍 మీ Worker profileలో Location మాత్రమే కావాలి. WhatsApp Attachment ద్వారా Current Location share చేయండి."
             else:
                 return None
-
             save = getattr(self.session_registry, "save", None)
             if callable(save):
                 save(sender_mobile)
