@@ -1,9 +1,8 @@
 """Safe fresh-test reset wrapper for end-to-end WhatsApp validation.
 
-The production user/deal history is preserved. A reset only pauses active deal
-state, snapshots the current profile/capabilities for diagnostics, clears the
-registration flag/capabilities used by onboarding, and resets the in-memory
-conversation session when the registry supports it.
+The production user/deal history is preserved. A reset snapshots the current
+profile/capabilities for diagnostics, pauses active deal/marketplace records,
+clears current-role state used by matching, and resets the conversation session.
 """
 from __future__ import annotations
 
@@ -109,6 +108,7 @@ class FreshTestResetService:
             except Exception:
                 capabilities = []
 
+        # Snapshot first so Fresh Test never destroys historical profile context.
         db.execute(
             """
             INSERT INTO fresh_test_archives(whatsapp_mobile,user_json,capabilities_json)
@@ -121,7 +121,52 @@ class FreshTestResetService:
             ),
         )
 
-        # Pause only active deal discussions; never delete historical records.
+        # Pause active state instead of deleting it. This keeps history available
+        # while ensuring old records cannot leak into a clean test or active match.
+        self._pause_active_deals(db, sender)
+        self._pause_marketplace_profiles(db, sender)
+
+        # Re-enter the normal onboarding contract with a clean current role/profile
+        # surface. The archived snapshot above preserves the pre-test values.
+        try:
+            db.execute(
+                """
+                UPDATE users
+                SET registration_complete=0,
+                    role=NULL,
+                    job_category=NULL,
+                    experience=NULL,
+                    availability=NULL,
+                    worker_registration_complete=0,
+                    latitude=NULL,
+                    longitude=NULL,
+                    location_name=NULL,
+                    location_address=NULL,
+                    location_updated_at=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE whatsapp_mobile=?
+                """,
+                (sender,),
+            )
+        except Exception:
+            # Legacy/minimal schemas still need to re-enter onboarding safely.
+            db.execute(
+                """
+                UPDATE users
+                SET registration_complete=0, updated_at=CURRENT_TIMESTAMP
+                WHERE whatsapp_mobile=?
+                """,
+                (sender,),
+            )
+
+        try:
+            db.execute("DELETE FROM user_capabilities WHERE whatsapp_mobile=?", (sender,))
+        except Exception:
+            pass
+
+        self._reset_session(sender)
+
+    def _pause_active_deals(self, db, sender: str) -> None:
         try:
             marks = ",".join("?" for _ in self.ACTIVE_DEAL_STATES)
             db.execute(
@@ -136,22 +181,25 @@ class FreshTestResetService:
         except Exception:
             pass
 
-        # Re-enter the normal onboarding contract. Existing profile values remain
-        # archived and may be overwritten by the new registration; history is safe.
-        db.execute(
+    @staticmethod
+    def _pause_marketplace_profiles(db, sender: str) -> None:
+        for sql in (
             """
-            UPDATE users
-            SET registration_complete=0, updated_at=CURRENT_TIMESTAMP
-            WHERE whatsapp_mobile=?
+            UPDATE seller_listings
+            SET status='PAUSED_FRESH_TEST', updated_at=CURRENT_TIMESTAMP
+            WHERE seller_mobile=? AND status='ACTIVE'
             """,
-            (sender,),
-        )
-        try:
-            db.execute("DELETE FROM user_capabilities WHERE whatsapp_mobile=?", (sender,))
-        except Exception:
-            pass
-
-        self._reset_session(sender)
+            """
+            UPDATE service_provider_profiles
+            SET status='PAUSED_FRESH_TEST', updated_at=CURRENT_TIMESTAMP
+            WHERE provider_mobile=? AND status='ACTIVE'
+            """,
+        ):
+            try:
+                db.execute(sql, (sender,))
+            except Exception:
+                # Some deployments/tests may not have that optional vertical table.
+                continue
 
     def _reset_session(self, sender: str) -> None:
         registry = self.sessions
