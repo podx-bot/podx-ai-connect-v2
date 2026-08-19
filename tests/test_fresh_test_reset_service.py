@@ -13,6 +13,16 @@ class DB:
                 whatsapp_mobile TEXT PRIMARY KEY,
                 name TEXT,
                 registration_complete INTEGER NOT NULL DEFAULT 0,
+                role TEXT,
+                job_category TEXT,
+                experience TEXT,
+                availability TEXT,
+                worker_registration_complete INTEGER NOT NULL DEFAULT 0,
+                latitude REAL,
+                longitude REAL,
+                location_name TEXT,
+                location_address TEXT,
+                location_updated_at TEXT,
                 updated_at TEXT
             )
             """
@@ -32,6 +42,28 @@ class DB:
                 buyer_user_id TEXT NOT NULL,
                 seller_user_id TEXT NOT NULL,
                 status TEXT NOT NULL,
+                updated_at TEXT
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE TABLE seller_listings(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seller_mobile TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
+                updated_at TEXT
+            )
+            """
+        )
+        self.conn.execute(
+            """
+            CREATE TABLE service_provider_profiles(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_mobile TEXT NOT NULL,
+                service_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ACTIVE',
                 updated_at TEXT
             )
             """
@@ -83,16 +115,31 @@ class Delegate:
 
 def seed(db):
     db.execute(
-        "INSERT INTO users(whatsapp_mobile,name,registration_complete) VALUES('u1','Manu',1)"
+        """
+        INSERT INTO users(
+            whatsapp_mobile,name,registration_complete,role,job_category,
+            experience,availability,worker_registration_complete,latitude,longitude,
+            location_name,location_address
+        ) VALUES('u1','Manu',1,'WORKER','Catering','1-2 Years','Tomorrow',1,16.4,80.6,'Vuyyuru','Main Road')
+        """
     )
     db.execute(
         "INSERT INTO user_capabilities(whatsapp_mobile,capability) VALUES('u1','BUYER')"
+    )
+    db.execute(
+        "INSERT INTO user_capabilities(whatsapp_mobile,capability) VALUES('u1','WORKER')"
     )
     db.execute(
         """
         INSERT INTO universal_deal_discussions(buyer_user_id,seller_user_id,status)
         VALUES('u1','s1','WAITING_BUYER_CONFIRM')
         """
+    )
+    db.execute(
+        "INSERT INTO seller_listings(seller_mobile,product_name,status) VALUES('u1','Chicken','ACTIVE')"
+    )
+    db.execute(
+        "INSERT INTO service_provider_profiles(provider_mobile,service_name,status) VALUES('u1','Electrician','ACTIVE')"
     )
 
 
@@ -126,7 +173,32 @@ def test_fresh_test_archives_profile_pauses_deal_and_reenters_onboarding():
     assert deal["status"] == "PAUSED_FRESH_TEST"
     archive = db.fetchone("SELECT * FROM fresh_test_archives WHERE whatsapp_mobile='u1'")
     assert archive is not None
+    assert "Catering" in archive["user_json"]
     assert "u1" not in sessions._sessions
+
+
+def test_fresh_test_isolates_old_role_profile_and_marketplace_activity():
+    db = DB()
+    seed(db)
+    service = FreshTestResetService(Delegate(), Users(db), Sessions())
+
+    service.process("u1", "fresh test")
+
+    user = db.fetchone("SELECT * FROM users WHERE whatsapp_mobile='u1'")
+    assert user["role"] is None
+    assert user["job_category"] is None
+    assert user["experience"] is None
+    assert user["availability"] is None
+    assert user["worker_registration_complete"] == 0
+    assert user["latitude"] is None
+    assert user["longitude"] is None
+    assert user["location_name"] is None
+    assert user["location_address"] is None
+
+    listing = db.fetchone("SELECT status FROM seller_listings WHERE seller_mobile='u1'")
+    provider = db.fetchone("SELECT status FROM service_provider_profiles WHERE provider_mobile='u1'")
+    assert listing["status"] == "PAUSED_FRESH_TEST"
+    assert provider["status"] == "PAUSED_FRESH_TEST"
 
 
 def test_history_is_not_deleted_by_fresh_test():
@@ -137,6 +209,8 @@ def test_history_is_not_deleted_by_fresh_test():
     service.process("u1", "reset test")
 
     assert db.fetchone("SELECT id FROM universal_deal_discussions WHERE buyer_user_id='u1'") is not None
+    assert db.fetchone("SELECT id FROM seller_listings WHERE seller_mobile='u1'") is not None
+    assert db.fetchone("SELECT id FROM service_provider_profiles WHERE provider_mobile='u1'") is not None
     assert db.fetchone("SELECT id FROM fresh_test_archives WHERE whatsapp_mobile='u1'") is not None
 
 
