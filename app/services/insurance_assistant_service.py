@@ -105,12 +105,30 @@ class InsuranceAssistantService:
         return {
             "status": "GENERIC_GUIDANCE",
             "intent": intent,
-            "answer": self._generic_answer(intent.topic),
+            "answer": self._generic_answer(intent.topic, intent.category),
             "next_action": "CLARIFY_ONLY_IF_NEEDED",
         }
 
     @staticmethod
-    def _generic_answer(topic: str) -> str:
+    def _generic_answer(topic: str, category: str = "general") -> str:
+        if topic == "general_guidance" and category == "health":
+            return (
+                "Health insurance అని అర్థమైంది ✅ అదే detail మళ్లీ అడగను. "
+                "Familyకి సరైన options compare చేయడానికి ముందుగా cover చేయాల్సిన సభ్యుల సంఖ్య మరియు వారి వయసులు చెప్పండి. "
+                "తర్వాత అవసరమైన missing details మాత్రమే అడుగుతాను."
+            )
+        if topic == "general_guidance" and category != "general":
+            labels = {
+                "life": "Life/Term insurance",
+                "motor": "Motor insurance",
+                "travel": "Travel insurance",
+                "personal_accident": "Personal Accident insurance",
+                "home": "Home insurance",
+                "business": "Business insurance",
+            }
+            label = labels.get(category, "Insurance")
+            return f"{label} అని అర్థమైంది ✅ అదే category మళ్లీ అడగను. ఇప్పుడు అవసరమైన missing details మాత్రమే అడుగుతాను."
+
         answers = {
             "premium": "Premium age, coverage amount, term, health/risk details, add-ons and insurer pricingపై మారుతుంది. Exact quote కోసం customer details + verified product quote అవసరం.",
             "coverage": "Coverage అంటే policyలో insurer pay/protect చేసే insured events/benefits. Sum insured, sub-limits, waiting periods and exclusionsతో కలిసి చూడాలి.",
