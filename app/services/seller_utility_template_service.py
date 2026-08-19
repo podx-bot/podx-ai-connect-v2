@@ -1,7 +1,13 @@
 """Approved WhatsApp utility-template sender for seller re-engagement.
 
-This service is intentionally configuration-driven: Meta template approval happens
-outside the application, so no unapproved template name is hard-coded here.
+Meta template approval happens outside the application, so the template name and
+language are configuration-driven rather than hard-coded.
+
+Expected approved template contract:
+- body variable {{1}}: PODX request summary
+- body variable {{2}}: request id
+- quick-reply button 0: Confirm
+- quick-reply button 1: Decline
 """
 from __future__ import annotations
 
@@ -28,9 +34,9 @@ class SellerUtilityTemplateService:
 
     @staticmethod
     def _text_parameter(value) -> dict:
-        return {"type": "text", "text": str(value or "-")[:1024]}
+        return {"type": "text", "text": str(value or "-").strip()[:900]}
 
-    def send_seller_interest(self, *, recipient_mobile, buyer_name, item, quantity, request_id) -> dict:
+    def send_seller_interest(self, *, recipient_mobile, summary, request_id) -> dict:
         name = self.template_name
         if not name:
             return {
@@ -39,13 +45,12 @@ class SellerUtilityTemplateService:
                 "required_env": self.TEMPLATE_NAME_ENV,
             }
 
+        request_id = int(request_id)
         components = [
             {
                 "type": "body",
                 "parameters": [
-                    self._text_parameter(buyer_name),
-                    self._text_parameter(item),
-                    self._text_parameter(quantity),
+                    self._text_parameter(summary),
                     self._text_parameter(request_id),
                 ],
             },
@@ -53,13 +58,13 @@ class SellerUtilityTemplateService:
                 "type": "button",
                 "sub_type": "quick_reply",
                 "index": "0",
-                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_CONFIRM:{int(request_id)}"}],
+                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_CONFIRM:{request_id}"}],
             },
             {
                 "type": "button",
                 "sub_type": "quick_reply",
                 "index": "1",
-                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_DECLINE:{int(request_id)}"}],
+                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_DECLINE:{request_id}"}],
             },
         ]
         payload = {
