@@ -12,14 +12,9 @@ from app.models.session import ConversationStep
 
 class UniversalRegistrationProfileService:
     LANGUAGE_MAP = {
-        "1": "Telugu",
-        "తెలుగు": "Telugu",
-        "telugu": "Telugu",
-        "2": "English",
-        "english": "English",
-        "3": "Hindi",
-        "हिंदी": "Hindi",
-        "hindi": "Hindi",
+        "1": "Telugu", "తెలుగు": "Telugu", "telugu": "Telugu",
+        "2": "English", "english": "English",
+        "3": "Hindi", "हिंदी": "Hindi", "hindi": "Hindi",
     }
 
     def __init__(self, user_repository, session_registry) -> None:
@@ -36,8 +31,6 @@ class UniversalRegistrationProfileService:
             session.data = data
         step_name = str(getattr(session.step, "name", session.step))
 
-        # Legacy/in-flight onboarding states migrate forward instead of forcing
-        # mobile entry or the old 1-6 capability menu.
         if step_name in {"WAITING_MOBILE", "WAITING_CAPABILITIES"}:
             user = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
             if user and int(user.get("registration_complete") or 0) == 1:
@@ -84,11 +77,9 @@ class UniversalRegistrationProfileService:
                 area=clean,
             )
             session.step = ConversationStep.MAIN_MENU
-            return self._reply(sender_mobile, self._complete_prompt(language))
+            data["face_welcome_handoff_pending"] = True
+            return self._reply(sender_mobile, self._complete_with_face_welcome_prompt(language))
 
-        # If this service is reached for an unexpected legacy onboarding state,
-        # restart safely at language selection rather than asking for capabilities,
-        # OTP, or typed-mobile re-entry.
         data.clear()
         data["entered_mobile"] = sender_mobile
         session.step = ConversationStep.WAITING_LANGUAGE
@@ -114,43 +105,53 @@ class UniversalRegistrationProfileService:
 
     @staticmethod
     def _name_prompt(language: str) -> str:
-        if language == "English":
-            return "What is your name?"
-        if language == "Hindi":
-            return "आपका नाम क्या है?"
+        if language == "English": return "What is your name?"
+        if language == "Hindi": return "आपका नाम क्या है?"
         return "మీ పేరు చెప్పండి."
 
     @staticmethod
     def _name_retry(language: str) -> str:
-        if language == "English":
-            return "Please tell me your name."
-        if language == "Hindi":
-            return "कृपया अपना नाम बताएं।"
+        if language == "English": return "Please tell me your name."
+        if language == "Hindi": return "कृपया अपना नाम बताएं।"
         return "దయచేసి మీ పేరు చెప్పండి."
 
     @staticmethod
     def _area_prompt(language: str) -> str:
-        if language == "English":
-            return "Tell me your area or town."
-        if language == "Hindi":
-            return "अपना क्षेत्र या शहर बताएं।"
+        if language == "English": return "Tell me your area or town."
+        if language == "Hindi": return "अपना क्षेत्र या शहर बताएं।"
         return "మీ ప్రాంతం లేదా పట్టణం పేరు చెప్పండి."
 
     @staticmethod
     def _area_retry(language: str) -> str:
-        if language == "English":
-            return "Please enter a valid area or town name."
-        if language == "Hindi":
-            return "कृपया सही क्षेत्र या शहर का नाम बताएं।"
+        if language == "English": return "Please enter a valid area or town name."
+        if language == "Hindi": return "कृपया सही क्षेत्र या शहर का नाम बताएं।"
         return "దయచేసి సరైన ప్రాంతం లేదా పట్టణం పేరు చెప్పండి."
 
     @staticmethod
     def _complete_prompt(language: str) -> str:
-        if language == "English":
-            return "✅ Your PODX profile is ready. Tell me what you want to do."
-        if language == "Hindi":
-            return "✅ आपका PODX प्रोफ़ाइल तैयार है। अब बताएं आपको क्या चाहिए।"
+        if language == "English": return "✅ Your PODX profile is ready. Tell me what you want to do."
+        if language == "Hindi": return "✅ आपका PODX प्रोफ़ाइल तैयार है। अब बताएं आपको क्या चाहिए।"
         return "✅ మీ PODX ప్రొఫైల్ సిద్ధమైంది. ఇప్పుడు మీకు ఏం కావాలో చెప్పండి."
+
+    @staticmethod
+    def _complete_with_face_welcome_prompt(language: str) -> str:
+        if language == "English":
+            return (
+                "✅ Your PODX profile is ready.\n\n"
+                "🙂 Optional: Enable Face Welcome? If enabled, PODX can recognize you at participating businesses and show a welcome. A clear face photo is needed only with your consent.\n"
+                "Yes / Not now"
+            )
+        if language == "Hindi":
+            return (
+                "✅ आपका PODX प्रोफ़ाइल तैयार है।\n\n"
+                "🙂 वैकल्पिक: Face Welcome चालू करें? आपकी सहमति के बाद ही एक साफ़ face photo मांगी जाएगी।\n"
+                "हाँ / अभी नहीं"
+            )
+        return (
+            "✅ మీ PODX ప్రొఫైల్ సిద్ధమైంది.\n\n"
+            "🙂 Optional: Face Welcome enable చేయాలా? పాల్గొనే షాప్/బిజినెస్ వద్ద మిమ్మల్ని గుర్తించి welcome చేయడానికి ఇది ఉపయోగపడుతుంది. మీ consent ఇచ్చిన తర్వాత మాత్రమే clear face photo అడుగుతాం.\n"
+            "అవును / ఇప్పుడు వద్దు"
+        )
 
     @staticmethod
     def _open_prompt(language: str | None) -> str:
