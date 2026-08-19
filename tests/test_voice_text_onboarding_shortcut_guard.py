@@ -20,7 +20,13 @@ class DB:
 class Repo:
     def __init__(self, registration_complete):
         self.database = DB(registration_complete)
+        self.registration_complete = registration_complete
         self.active_calls = 0
+
+    def find_user(self, sender):
+        if self.registration_complete is None:
+            return None
+        return {"whatsapp_mobile": sender, "registration_complete": self.registration_complete}
 
     def active_assignment_for_worker(self, sender):
         self.active_calls += 1
