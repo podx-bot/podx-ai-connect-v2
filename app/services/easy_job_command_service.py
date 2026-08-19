@@ -56,6 +56,12 @@ class EasyJobCommandService:
         clean = " ".join(str(message).strip().split())
         normalized = clean.lower()
 
+        # Registration/onboarding owns short answers such as 1/2/yes/no. Fresh
+        # Test deliberately preserves historical job rows, so an old pending job
+        # must never steal a language/name/area answer from either text or voice.
+        if not self._is_registered_user(sender_mobile):
+            return None
+
         if not self._could_be_easy_job_command(normalized):
             return None
 
@@ -113,6 +119,18 @@ class EasyJobCommandService:
         ):
             return self.lifecycle_service.process_text(sender_mobile, f"COMPLETE {job_id}")
         return None
+
+    def _is_registered_user(self, sender_mobile: str) -> bool:
+        try:
+            row = self.repository.database.fetchone(
+                "SELECT registration_complete FROM users WHERE whatsapp_mobile=?",
+                (sender_mobile,),
+            )
+            return bool(row and int(row["registration_complete"] or 0) == 1)
+        except Exception:
+            # Shortcut commands are optional enrichment. If registration state
+            # cannot be proven, fail closed and let the main conversation own it.
+            return False
 
     def _latest_pending_invitation(self, worker_mobile: str) -> Optional[int]:
         row = self.repository.database.fetchone(
