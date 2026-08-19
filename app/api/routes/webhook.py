@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from app.models.session import ConversationStep
+from app.services.insurance_whatsapp_router import InsuranceWhatsAppRouter
 from app.services.webhook_recovery_service import WebhookRecoveryService
 from app.whatsapp.payload_parser import (
     extract_audio_messages,
@@ -51,6 +52,14 @@ def _process_user_text(container, sender_mobile: str, message: str) -> str:
     if lifecycle_reply is not None:
         visible_log(f"JOB LIFECYCLE COMMAND: sender={sender_mobile} text={message}")
         return lifecycle_reply
+
+    insurance_router = getattr(container, "insurance_whatsapp_router", None)
+    if insurance_router is None:
+        insurance_router = InsuranceWhatsAppRouter()
+    insurance_reply = insurance_router.process_text(message)
+    if insurance_reply is not None:
+        visible_log(f"INSURANCE COMMAND: sender={sender_mobile} text={message}")
+        return insurance_reply
 
     return container.conversation_service.process(
         sender_mobile=sender_mobile,
@@ -341,12 +350,9 @@ async def receive_webhook(request: Request) -> dict:
                 recipient_mobile=incoming.sender_mobile,
                 message=reply_text,
             )
-            visible_log(f"WHATSAPP LOCATION SEND RESULT: sender={incoming.sender_mobile} result={send_result}")
             replies.append({
                 "message_type": "location",
                 "sender_mobile": incoming.sender_mobile,
-                "latitude": incoming.latitude,
-                "longitude": incoming.longitude,
                 "reply": reply_text,
                 "send_result": send_result,
             })
@@ -354,11 +360,4 @@ async def receive_webhook(request: Request) -> dict:
             visible_log(f"WHATSAPP LOCATION PROCESSING ERROR: {type(error).__name__}: {error}")
             _recover_user(container, incoming.sender_mobile, "location")
 
-    return {
-        "status": "processed",
-        "incoming_text_count": len(text_messages),
-        "incoming_audio_count": len(audio_messages),
-        "incoming_location_count": len(location_messages),
-        "delivery_status_count": len(statuses),
-        "replies": replies,
-    }
+    return {"status": "received", "replies": replies}
