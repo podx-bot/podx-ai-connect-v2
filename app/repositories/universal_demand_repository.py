@@ -98,6 +98,20 @@ class UniversalDemandRepository:
             ).fetchone()
         return self._row(row) if row else None
 
+    def latest_active_for_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT *
+                FROM {self.TABLE}
+                WHERE user_id = ? AND status = 'ACTIVE'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (str(user_id),),
+            ).fetchone()
+        return self._row(row) if row else None
+
     def latest_active_for_user_missing_location(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(

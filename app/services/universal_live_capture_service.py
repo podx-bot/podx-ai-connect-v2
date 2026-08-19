@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 
@@ -13,6 +14,16 @@ class UniversalLiveCaptureService:
         "buy_interested ", "buy_not_interested ", "seller_confirm ",
         "seller_decline ", "order_continue ", "direct_talk ",
     )
+    QUANTITY_FOLLOWUP_RE = re.compile(
+        r"(?<![\w.])(?P<quantity>\d+(?:\.\d+)?)\s*"
+        r"(?P<unit>kg|kgs|kilo(?:gram)?s?|కిలోలు?|కిలో|కేజీలు?|కేజీ|किलो)",
+        re.IGNORECASE,
+    )
+    QUANTITY_FOLLOWUP_FILLERS = {
+        "", "కావాలి", "నాకు కావాలి", "చాలు", "సరిపోతుంది",
+        "please", "want", "need", "i want", "i need", "want it", "need it",
+        "चाहिए", "मुझे चाहिए",
+    }
 
     def __init__(self, extractor, demand_repository, matcher, targeting_service,
                  notification_service, notification_repository, user_repository,
@@ -34,6 +45,17 @@ class UniversalLiveCaptureService:
             return None
         if not self._can_capture(sender_mobile):
             return None
+
+        quantity_followup = self._quantity_followup(text)
+        if quantity_followup is not None:
+            reply = self._revise_latest_quantity(
+                sender_mobile=sender_mobile,
+                quantity=quantity_followup[0],
+                unit=quantity_followup[1],
+            )
+            if reply is not None:
+                return reply
+
         extracted = self.extractor.extract(text)
         if not extracted.get("success"):
             return None
@@ -87,6 +109,48 @@ class UniversalLiveCaptureService:
         stored = self.demands.get(int(pending["id"])) or pending
         self._trigger_demand_intelligence(stored)
         return self._match_target_notify(stored, location_saved=True)
+
+    def _revise_latest_quantity(self, sender_mobile: str, quantity: float, unit: str) -> Optional[str]:
+        latest = getattr(self.demands, "latest_active_for_user", None)
+        if not callable(latest):
+            return None
+        previous = latest(sender_mobile)
+        if previous is None:
+            return None
+
+        revised = {
+            "user_id": str(sender_mobile),
+            "side": previous.get("side"),
+            "domain": previous.get("domain"),
+            "subject": previous.get("subject"),
+            "quantity": float(quantity),
+            "unit": unit,
+            "price": previous.get("price"),
+            "currency": previous.get("currency"),
+            "when_text": previous.get("when_text"),
+            "latitude": previous.get("latitude"),
+            "longitude": previous.get("longitude"),
+            "location_text": previous.get("location_text"),
+            "constraints": previous.get("constraints") or {},
+            "source": "text",
+            "media_ref": None,
+            "status": "ACTIVE",
+        }
+        request_id = self.demands.create(revised)
+        self.demands.update_status(int(previous["id"]), "REVISED")
+        stored = self.demands.get(request_id) or {**revised, "id": request_id}
+        subject = str(stored.get("subject") or "మీ requirement")
+        quantity_text = f"{float(quantity):g} {unit}"
+
+        if stored.get("latitude") is None or stored.get("longitude") is None:
+            return (
+                f"🔄 {subject} quantity {quantity_text}కి update చేశాను. "
+                "మీకు దగ్గరలో సరైన match వెతకడానికి Current Location share చేయండి."
+            )
+
+        self._trigger_demand_intelligence(stored)
+        result = self._match_target_notify(stored)
+        return f"🔄 {subject} quantity {quantity_text}కి update చేశాను.\n{result}"
 
     def _trigger_demand_intelligence(self, request: Dict[str, Any]) -> None:
         if self.demand_intelligence is None:
@@ -154,6 +218,21 @@ class UniversalLiveCaptureService:
 
         return (f"{prefix}మీ request ACTIVEగా ఉంచాను. ఇప్పుడు direct match లేదు. "
                 "సంబంధిత వ్యక్తి/product/service దొరికిన వెంటనే మీకు WhatsAppలో చెప్తాను.")
+
+    @classmethod
+    def _quantity_followup(cls, text: str) -> Optional[tuple[float, str]]:
+        match = cls.QUANTITY_FOLLOWUP_RE.search(str(text or ""))
+        if match is None:
+            return None
+        remaining = f"{text[:match.start()]} {text[match.end():]}"
+        remaining = " ".join(remaining.casefold().split()).strip(" .,!?:;")
+        allowed = {item.casefold().strip(" .,!?:;") for item in cls.QUANTITY_FOLLOWUP_FILLERS}
+        if remaining not in allowed:
+            return None
+        quantity = float(match.group("quantity"))
+        if quantity <= 0:
+            return None
+        return quantity, "kg"
 
     @classmethod
     def _skip_text(cls, text: str) -> bool:
