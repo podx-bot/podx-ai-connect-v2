@@ -64,10 +64,15 @@ class InsuranceAssistantService:
 
     @staticmethod
     def _match(text: str, mapping: dict[str, tuple[str, ...]]) -> str | None:
+        matches: list[tuple[int, str]] = []
         for key, terms in mapping.items():
-            if any(term in text for term in terms):
-                return key
-        return None
+            for term in terms:
+                if term in text:
+                    matches.append((len(term), key))
+        if not matches:
+            return None
+        matches.sort(key=lambda item: item[0], reverse=True)
+        return matches[0][1]
 
     def answer(self, message: str, *, verified_product: dict | None = None) -> dict:
         intent = self.classify(message)
