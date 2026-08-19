@@ -3,11 +3,13 @@
 Meta template approval happens outside the application, so the template name and
 language are configuration-driven rather than hard-coded.
 
-Expected approved template contract:
-- body variable {{1}}: PODX request summary
-- body variable {{2}}: request id
-- quick-reply button 0: Confirm
-- quick-reply button 1: Decline
+Current approved/template-in-review contract used by PODX:
+- body variable {{1}} only
+- no template buttons required
+
+The single variable carries the request summary, request id, and explicit
+CONFIRM/DECLINE instruction. This keeps the Meta template compact while still
+preserving exact deal context for the seller reply flow.
 """
 from __future__ import annotations
 
@@ -36,6 +38,14 @@ class SellerUtilityTemplateService:
     def _text_parameter(value) -> dict:
         return {"type": "text", "text": str(value or "-").strip()[:900]}
 
+    @staticmethod
+    def _compact_body(summary, request_id) -> str:
+        clean_summary = str(summary or "New PODX customer request").strip()
+        return (
+            f"Request #{int(request_id)}: {clean_summary} "
+            "Reply CONFIRM if you can help, or DECLINE if you cannot."
+        )[:900]
+
     def send_seller_interest(self, *, recipient_mobile, summary, request_id) -> dict:
         name = self.template_name
         if not name:
@@ -49,23 +59,8 @@ class SellerUtilityTemplateService:
         components = [
             {
                 "type": "body",
-                "parameters": [
-                    self._text_parameter(summary),
-                    self._text_parameter(request_id),
-                ],
-            },
-            {
-                "type": "button",
-                "sub_type": "quick_reply",
-                "index": "0",
-                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_CONFIRM:{request_id}"}],
-            },
-            {
-                "type": "button",
-                "sub_type": "quick_reply",
-                "index": "1",
-                "parameters": [{"type": "payload", "payload": f"UNIV_SELLER_DECLINE:{request_id}"}],
-            },
+                "parameters": [self._text_parameter(self._compact_body(summary, request_id))],
+            }
         ]
         payload = {
             "messaging_product": "whatsapp",
