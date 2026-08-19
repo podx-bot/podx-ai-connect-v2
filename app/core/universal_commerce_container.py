@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from app.core.container import AppContainer
+from app.repositories.receipt_aware_delivery_log_repository import ReceiptAwareDeliveryLogRepository
 from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
 from app.services.receipt_aware_universal_notification_service import ReceiptAwareUniversalNotificationService
 from app.services.reliable_universal_commerce_response_command_service import ReliableUniversalCommerceResponseCommandService
@@ -21,6 +22,13 @@ class UniversalCommerceAppContainer(AppContainer):
             contact_resolver=self._resolve_universal_contact,
         )
         self.universal_live_capture_service.notifications = self.universal_notification_service
+
+        # Webhook delivery receipts are already persisted through this repository;
+        # attach the seller recovery hook at the same stable entry point.
+        self.delivery_log_repository = ReceiptAwareDeliveryLogRepository(
+            self.database,
+            delivery_status_handler=self.universal_notification_service.handle_delivery_status,
+        )
 
         self.universal_response_command_service = ReliableUniversalCommerceResponseCommandService(
             demand_repository=self.universal_demand_repository,
