@@ -9,6 +9,7 @@ conversation.
 from __future__ import annotations
 
 from app.models.session import ConversationStep
+from app.services.smart_job_message_service import SmartJobMessageService
 
 
 class DynamicRoleProfileAttachmentService:
@@ -29,6 +30,7 @@ class DynamicRoleProfileAttachmentService:
         min_confidence: float = 0.75,
         profile_essentials=None,
         session_registry=None,
+        smart_job_message_service=None,
     ) -> None:
         self.delegate = delegate
         self.category_brain = category_brain
@@ -36,10 +38,12 @@ class DynamicRoleProfileAttachmentService:
         self.min_confidence = float(min_confidence)
         self.profile_essentials = profile_essentials
         self.session_registry = session_registry
+        self.smart_job_message_service = smart_job_message_service or SmartJobMessageService()
 
     def process(self, sender_mobile: str, message: str) -> str:
         clean = str(message or "").strip()
         intent_context = self._attach_for_intent(sender_mobile, clean)
+        self._prefill_worker_slots(sender_mobile, clean, intent_context)
         resume_prompt = self._resume_missing_profile(sender_mobile, intent_context)
         if resume_prompt is not None:
             return resume_prompt
@@ -102,21 +106,66 @@ class DynamicRoleProfileAttachmentService:
         except Exception:
             return None
 
-    def _resume_missing_profile(self, sender_mobile: str, intent_context) -> str | None:
-        """Resume only the first missing durable worker field.
+    def _prefill_worker_slots(self, sender_mobile: str, message: str, intent_context) -> None:
+        """Capture worker slots already present in the same natural-language request.
 
-        This bridge deliberately applies only when both the progressive planner
-        and the stateful session registry are present. Other roles remain
-        transaction-scoped and continue directly to their vertical runtime.
+        The live intent wrapper previously stopped at the first missing worker field,
+        which meant a request such as "Catering పని కావాలి, 2 years experience,
+        రేపటి నుంచి" still reopened the category/experience/availability menus.
+        This bridge reuses the deterministic SmartJobMessageService before the
+        missing-only gate, so only genuinely missing fields are asked.
         """
+        if not intent_context or intent_context.get("capability") != "WORKER":
+            return
+        if self.session_registry is None:
+            return
+        try:
+            details = self.smart_job_message_service.extract(message)
+            session = self.session_registry.get(sender_mobile)
+            data = getattr(session, "data", None)
+            if not isinstance(data, dict):
+                return
+
+            user = intent_context.get("user") or {}
+            data["role"] = "WORKER"
+            category = details.get("category") or user.get("job_category") or data.get("category")
+            experience = details.get("experience") or user.get("experience") or data.get("experience")
+            availability = details.get("availability") or user.get("availability") or data.get("availability")
+
+            if category:
+                data["category"] = category
+            if experience:
+                data["experience"] = experience
+            if availability:
+                data["availability"] = availability
+
+            # Once all durable non-location worker slots are known, persist them
+            # immediately so a restart cannot lose the natural-language capture.
+            save_worker = getattr(self.user_repository, "save_worker_profile", None)
+            if category and experience and availability and callable(save_worker):
+                save_worker(
+                    whatsapp_mobile=sender_mobile,
+                    category=category,
+                    experience=experience,
+                    availability=availability,
+                )
+                refreshed = self.user_repository.find_by_whatsapp_mobile(sender_mobile)
+                if refreshed:
+                    intent_context["user"] = refreshed
+                intent_context["plan"] = self._record_profile_plan(sender_mobile, "WORKER")
+
+            save_session = getattr(self.session_registry, "save", None)
+            if callable(save_session):
+                save_session(sender_mobile)
+        except Exception:
+            # Slot extraction is enrichment only; never drop the user's request.
+            return
+
+    def _resume_missing_profile(self, sender_mobile: str, intent_context) -> str | None:
+        """Resume only the first genuinely missing durable worker field."""
         if not intent_context or self.session_registry is None:
             return None
         if intent_context.get("capability") != "WORKER":
-            return None
-
-        plan = intent_context.get("plan")
-        missing = tuple(getattr(plan, "missing_fields", ()) or ())
-        if not missing:
             return None
 
         try:
@@ -127,12 +176,27 @@ class DynamicRoleProfileAttachmentService:
 
             user = intent_context.get("user") or {}
             data["role"] = "WORKER"
-            if user.get("job_category"):
+            if user.get("job_category") and not data.get("category"):
                 data["category"] = user["job_category"]
-            if user.get("experience"):
+            if user.get("experience") and not data.get("experience"):
                 data["experience"] = user["experience"]
-            if user.get("availability"):
+            if user.get("availability") and not data.get("availability"):
                 data["availability"] = user["availability"]
+
+            missing = []
+            if not data.get("category"):
+                missing.append("job_category")
+            if not data.get("experience"):
+                missing.append("experience")
+            if not data.get("availability"):
+                missing.append("availability")
+            if user.get("latitude") is None or user.get("longitude") is None:
+                missing.append("location")
+
+            data["role_profile_missing_fields"] = list(missing)
+            data["role_profile_complete"] = not missing
+            if not missing:
+                return None
 
             first = missing[0]
             if first == "job_category":
