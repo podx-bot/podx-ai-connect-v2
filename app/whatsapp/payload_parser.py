@@ -69,15 +69,7 @@ def extract_image_messages(payload: dict[str, Any]) -> list[IncomingImageMessage
         mime = image.get("mime_type")
         caption = image.get("caption")
         if sender and provider_id and media_id:
-            results.append(
-                IncomingImageMessage(
-                    provider_message_id=provider_id,
-                    sender_mobile=sender,
-                    media_id=media_id,
-                    mime_type=str(mime).strip() if mime else None,
-                    caption=str(caption).strip() if caption else None,
-                )
-            )
+            results.append(IncomingImageMessage(provider_message_id=provider_id, sender_mobile=sender, media_id=media_id, mime_type=str(mime).strip() if mime else None, caption=str(caption).strip() if caption else None))
     return results
 
 
@@ -94,16 +86,7 @@ def extract_document_messages(payload: dict[str, Any]) -> list[IncomingDocumentM
         caption = document.get("caption")
         filename = document.get("filename")
         if sender and provider_id and media_id:
-            results.append(
-                IncomingDocumentMessage(
-                    provider_message_id=provider_id,
-                    sender_mobile=sender,
-                    media_id=media_id,
-                    mime_type=str(mime).strip() if mime else None,
-                    caption=str(caption).strip() if caption else None,
-                    filename=str(filename).strip() if filename else None,
-                )
-            )
+            results.append(IncomingDocumentMessage(provider_message_id=provider_id, sender_mobile=sender, media_id=media_id, mime_type=str(mime).strip() if mime else None, caption=str(caption).strip() if caption else None, filename=str(filename).strip() if filename else None))
     return results
 
 
@@ -132,12 +115,32 @@ def extract_location_messages(payload: dict[str, Any]) -> list[IncomingLocationM
     return results
 
 
+def _format_delivery_error(error: Any) -> str | None:
+    if not isinstance(error, dict):
+        return str(error).strip() if error else None
+    code = str(error.get("code") or "").strip()
+    title = str(error.get("title") or "").strip()
+    message = str(error.get("message") or "").strip()
+    data = error.get("error_data") or {}
+    details = str(data.get("details") or "").strip() if isinstance(data, dict) else ""
+    parts = []
+    if code:
+        parts.append(f"META_CODE={code}")
+    if title:
+        parts.append(f"TITLE={title}")
+    if message:
+        parts.append(f"MESSAGE={message}")
+    if details:
+        parts.append(f"DETAILS={details}")
+    return " | ".join(parts) if parts else str(error)
+
+
 def extract_delivery_statuses(payload: dict[str, Any]) -> list[DeliveryStatus]:
     results = []
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             for status in change.get("value", {}).get("statuses", []):
                 errors = status.get("errors", [])
-                error_message = str(errors[0]) if errors else None
+                error_message = _format_delivery_error(errors[0]) if errors else None
                 results.append(DeliveryStatus(str(status.get("id", "")).strip(), str(status.get("recipient_id")).strip() if status.get("recipient_id") else None, str(status.get("status", "unknown")).strip(), error_message))
     return results

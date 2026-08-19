@@ -1,6 +1,8 @@
 """Receipt-aware seller interest delivery with async WhatsApp failure recovery."""
 from __future__ import annotations
 
+import re
+
 from app.repositories.seller_interest_delivery_repository import SellerInterestDeliveryRepository
 from app.services.reliable_universal_notification_service import ReliableUniversalNotificationService
 
@@ -14,6 +16,11 @@ class ReceiptAwareUniversalNotificationService(ReliableUniversalNotificationServ
     def _fallback_body(self, request, buyer_name: str) -> str:
         body = self._seller_interest_message(request, buyer_name)
         return body + "\n\nButtons delivery కాలేదు. Confirm అయితే CONFIRM అని, వద్దంటే DECLINE అని reply చేయండి."
+
+    @staticmethod
+    def _meta_error_code(error_message: str | None) -> str:
+        match = re.search(r"(?:META_CODE=|['\"]code['\"]\s*:\s*)(\d+)", str(error_message or ""))
+        return match.group(1) if match else ""
 
     def register_interest(self, request, buyer_user_id, seller_user_id=None):
         result = super().register_interest(request, buyer_user_id, seller_user_id)
@@ -76,9 +83,16 @@ class ReceiptAwareUniversalNotificationService(ReliableUniversalNotificationServ
 
         buyer_mobile = str(receipt.get("buyer_mobile") or "").strip()
         buyer_notice = None
+        meta_code = self._meta_error_code(error_message)
+        diagnostic = f" Meta code: {meta_code}." if meta_code else ""
         if buyer_mobile:
             buyer_notice = self.whatsapp.send_text_message(
                 buyer_mobile,
-                "⚠️ Seller WhatsApp delivery పూర్తికాలేదు. మీ interest save అయింది; PODX ఈ sellerని unavailable deliveryగా mark చేసి next match ప్రయత్నించాలి.",
+                "⚠️ Seller WhatsApp delivery పూర్తికాలేదు. మీ interest save అయింది; PODX ఈ sellerని unavailable deliveryగా mark చేసి next match ప్రయత్నించాలి." + diagnostic,
             )
-        return {"status": "FINAL_DELIVERY_FAILED", "buyer_notice": buyer_notice}
+        return {
+            "status": "FINAL_DELIVERY_FAILED",
+            "buyer_notice": buyer_notice,
+            "meta_error_code": meta_code or None,
+            "error_message": error_message,
+        }
