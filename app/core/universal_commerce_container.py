@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from app.core.container import AppContainer
 from app.services.end_to_end_app_flow_service import EndToEndAppFlowService
+from app.services.receipt_aware_universal_notification_service import ReceiptAwareUniversalNotificationService
 from app.services.reliable_universal_commerce_response_command_service import ReliableUniversalCommerceResponseCommandService
-from app.services.reliable_universal_notification_service import ReliableUniversalNotificationService
 from app.services.universal_aware_conversation_service import UniversalAwareConversationService
 
 
@@ -14,10 +14,8 @@ class UniversalCommerceAppContainer(AppContainer):
     def __init__(self) -> None:
         super().__init__()
 
-        # Production commerce flow uses a delivery-hardened notification layer.
-        # Keep the repository/WhatsApp/contact wiring from the base container,
-        # then point live capture and response commands at the hardened service.
-        self.universal_notification_service = ReliableUniversalNotificationService(
+        # Production commerce flow uses receipt-aware seller delivery recovery.
+        self.universal_notification_service = ReceiptAwareUniversalNotificationService(
             notification_repository=self.universal_notification_repository,
             whatsapp_service=self.whatsapp_service,
             contact_resolver=self._resolve_universal_contact,
