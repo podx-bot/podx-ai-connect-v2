@@ -77,8 +77,9 @@ class UniversalRegistrationProfileService:
                 area=clean,
             )
             session.step = ConversationStep.MAIN_MENU
-            data["face_welcome_handoff_pending"] = True
-            return self._reply(sender_mobile, self._complete_with_face_welcome_prompt(language))
+            data.pop("face_welcome_handoff_pending", None)
+            data.pop("face_welcome_photo_pending", None)
+            return self._reply(sender_mobile, self._complete_prompt(language))
 
         data.clear()
         data["entered_mobile"] = sender_mobile
@@ -132,26 +133,6 @@ class UniversalRegistrationProfileService:
         if language == "English": return "✅ Your PODX profile is ready. Tell me what you want to do."
         if language == "Hindi": return "✅ आपका PODX प्रोफ़ाइल तैयार है। अब बताएं आपको क्या चाहिए।"
         return "✅ మీ PODX ప్రొఫైల్ సిద్ధమైంది. ఇప్పుడు మీకు ఏం కావాలో చెప్పండి."
-
-    @staticmethod
-    def _complete_with_face_welcome_prompt(language: str) -> str:
-        if language == "English":
-            return (
-                "✅ Your PODX profile is ready.\n\n"
-                "🙂 Optional: Enable Face Welcome? If enabled, PODX can recognize you at participating businesses and show a welcome. A clear face photo is needed only with your consent.\n"
-                "Yes / Not now"
-            )
-        if language == "Hindi":
-            return (
-                "✅ आपका PODX प्रोफ़ाइल तैयार है।\n\n"
-                "🙂 वैकल्पिक: Face Welcome चालू करें? आपकी सहमति के बाद ही एक साफ़ face photo मांगी जाएगी।\n"
-                "हाँ / अभी नहीं"
-            )
-        return (
-            "✅ మీ PODX ప్రొఫైల్ సిద్ధమైంది.\n\n"
-            "🙂 Optional: Face Welcome enable చేయాలా? పాల్గొనే షాప్/బిజినెస్ వద్ద మిమ్మల్ని గుర్తించి welcome చేయడానికి ఇది ఉపయోగపడుతుంది. మీ consent ఇచ్చిన తర్వాత మాత్రమే clear face photo అడుగుతాం.\n"
-            "అవును / ఇప్పుడు వద్దు"
-        )
 
     @staticmethod
     def _open_prompt(language: str | None) -> str:
