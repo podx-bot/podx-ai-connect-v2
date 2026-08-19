@@ -1,5 +1,3 @@
-import os
-
 from app.services.seller_utility_template_service import SellerUtilityTemplateService
 
 
@@ -34,8 +32,8 @@ def test_template_sender_requires_config(monkeypatch):
     assert result["status"] == "SELLER_UTILITY_TEMPLATE_NOT_CONFIGURED"
 
 
-def test_template_sender_builds_approved_contract(monkeypatch):
-    monkeypatch.setenv("PODX_SELLER_INTEREST_TEMPLATE_NAME", "podx_seller_interest")
+def test_template_sender_builds_compact_approved_contract(monkeypatch):
+    monkeypatch.setenv("PODX_SELLER_INTEREST_TEMPLATE_NAME", "podx_seller_lead_notification")
     monkeypatch.setenv("PODX_SELLER_INTEREST_TEMPLATE_LANGUAGE", "en")
     whatsapp = FakeWhatsApp()
     service = SellerUtilityTemplateService(whatsapp)
@@ -50,9 +48,13 @@ def test_template_sender_builds_approved_contract(monkeypatch):
     payload = whatsapp.payloads[0]
     assert payload["type"] == "template"
     assert payload["to"] == "919000000000"
-    assert payload["template"]["name"] == "podx_seller_interest"
+    assert payload["template"]["name"] == "podx_seller_lead_notification"
     components = payload["template"]["components"]
-    assert components[0]["parameters"][0]["text"] == "5 kg chicken request"
-    assert components[0]["parameters"][1]["text"] == "42"
-    assert components[1]["parameters"][0]["payload"] == "UNIV_SELLER_CONFIRM:42"
-    assert components[2]["parameters"][0]["payload"] == "UNIV_SELLER_DECLINE:42"
+    assert len(components) == 1
+    assert components[0]["type"] == "body"
+    assert len(components[0]["parameters"]) == 1
+    body = components[0]["parameters"][0]["text"]
+    assert "Request #42" in body
+    assert "5 kg chicken request" in body
+    assert "CONFIRM" in body
+    assert "DECLINE" in body
