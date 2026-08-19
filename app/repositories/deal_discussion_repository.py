@@ -141,7 +141,7 @@ class DealDiscussionRepository:
         marks = ",".join("?" for _ in states)
         with self._connect() as conn:
             row = conn.execute(
-                f"SELECT * FROM universal_deal_discussions WHERE {column}=? AND status IN ({marks}) ORDER BY id DESC LIMIT 1",
+                f"SELECT * FROM universal_deal_discussions WHERE {column}=? AND status IN ({marks}) ORDER BY updated_at DESC, id DESC LIMIT 1",
                 (str(user_id), *states),
             ).fetchone()
         return self._row(row) if row else None
