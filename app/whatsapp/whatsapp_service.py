@@ -18,7 +18,6 @@ class WhatsAppService:
         "availability",
         "అందుబాటు",
         "వేచి",
-        "చూస్తున్నాను",
     )
 
     def __init__(
