@@ -14,5 +14,8 @@ def test_application_starts_with_universal_image_flow(tmp_path, monkeypatch):
         assert container.universal_live_capture_service is not None
         assert container.universal_image_service is not None
         assert container.universal_image_pending_repository is not None
+        assert container.conversation_os_runtime_service is not None
+        assert container.conversation_turn_ledger_repository is not None
+        assert container.conversation_service is container.conversation_os_runtime_service
     finally:
         app.state.container.close()
