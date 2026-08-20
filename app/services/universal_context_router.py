@@ -29,7 +29,7 @@ class UniversalContextRouter:
         # Telugu/Hindi conversational detail words. These are deliberately
         # domain-neutral: they describe quantity, timing, fulfilment or intent,
         # not a particular product/service.
-        "కావాలి", "కావాలి", "కావాలి", "ఉంది", "ఉందా", "ఇవ్వండి", "తీసుకుంటాను",
+        "కావాలి", "ఉంది", "ఉందా", "ఇవ్వండి", "తీసుకుంటాను",
         "కేజీ", "కేజీలు", "కేజీల", "కిలో", "కిలోలు", "గ్రాము", "గ్రాములు",
         "లీటర్", "లీటర్లు", "పీస్", "పీసులు", "ప్యాక్", "ప్యాకెట్లు", "బ్యాగ్", "బ్యాగులు",
         "డెలివరీ", "పికప్", "ఈరోజు", "రేపు", "ధర", "రేట్", "క్వాలిటీ",
