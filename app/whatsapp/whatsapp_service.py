@@ -1,3 +1,4 @@
+import threading
 import time
 from typing import Any
 
@@ -7,6 +8,17 @@ import httpx
 class WhatsAppService:
     RETRYABLE_HTTP_STATUS = {408, 429, 500, 502, 503, 504}
     MAX_AUDIO_BYTES = 16 * 1024 * 1024
+    STATUS_DUPLICATE_WINDOW_SECONDS = 10 * 60
+    STATUS_MESSAGE_MARKERS = (
+        "wait",
+        "waiting",
+        "pending",
+        "confirmation",
+        "confirm కోసం",
+        "availability",
+        "అందుబాటు",
+        "వేచి",
+    )
 
     def __init__(
         self,
@@ -21,6 +33,8 @@ class WhatsAppService:
         self.api_version = api_version
         self.max_attempts = max(1, int(max_attempts))
         self.retry_delay_seconds = max(0, float(retry_delay_seconds))
+        self._recent_status_messages = {}
+        self._recent_status_lock = threading.RLock()
         self._http_client = httpx.Client(
             timeout=httpx.Timeout(connect=3, read=60, write=60, pool=3),
             limits=httpx.Limits(
@@ -60,13 +74,47 @@ class WhatsAppService:
     def _mobile(mobile):
         return "".join(char for char in str(mobile) if char.isdigit())
 
+    @classmethod
+    def _looks_like_status_message(cls, message):
+        lowered = str(message or "").strip().casefold()
+        return bool(lowered and any(marker in lowered for marker in cls.STATUS_MESSAGE_MARKERS))
+
+    def _is_recent_duplicate_status(self, recipient_mobile, message):
+        body = str(message or "").strip()
+        if not self._looks_like_status_message(body):
+            return False
+        mobile = self._mobile(recipient_mobile)
+        key = (mobile, body.casefold())
+        now = time.monotonic()
+        with self._recent_status_lock:
+            expired = [
+                old_key
+                for old_key, sent_at in self._recent_status_messages.items()
+                if now - sent_at > self.STATUS_DUPLICATE_WINDOW_SECONDS
+            ]
+            for old_key in expired:
+                self._recent_status_messages.pop(old_key, None)
+            sent_at = self._recent_status_messages.get(key)
+            if sent_at is not None and now - sent_at <= self.STATUS_DUPLICATE_WINDOW_SECONDS:
+                return True
+            self._recent_status_messages[key] = now
+            return False
+
     def send_text_message(self, recipient_mobile, message):
+        clean_message = str(message).strip()
+        if self._is_recent_duplicate_status(recipient_mobile, clean_message):
+            return {
+                "success": True,
+                "status": "DUPLICATE_STATUS_SUPPRESSED",
+                "attempts": 0,
+                "suppressed": True,
+            }
         return self._send_with_retry({
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": self._mobile(recipient_mobile),
             "type": "text",
-            "text": {"preview_url": False, "body": str(message).strip()},
+            "text": {"preview_url": False, "body": clean_message},
         })
 
     def _send_media_by_id(self, recipient_mobile, kind, media_id, caption=""):

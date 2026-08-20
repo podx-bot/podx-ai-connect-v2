@@ -12,6 +12,7 @@ from app.repositories.podx_meet_repository import PodxMeetRepository
 from app.services.admin_monitoring_runtime_service import AdminMonitoringRuntimeService
 from app.services.admin_monitoring_service import AdminMonitoringService
 from app.services.conversation_os_runtime_service import ConversationOSRuntimeService
+from app.services.customer_facing_response_policy import CustomerFacingResponsePolicy
 from app.services.domain_complaint_prevention_service import DomainComplaintPreventionService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
 from app.services.dynamic_role_profile_attachment_service import DynamicRoleProfileAttachmentService
@@ -153,7 +154,15 @@ def create_app() -> FastAPI:
     )
     container.conversation_turn_ledger_repository = conversation_os_ledger
     container.conversation_os_runtime_service = conversation_os
-    container.conversation_service = conversation_os
+
+    # Outermost response boundary: every domain may reason with internal state,
+    # but no channel should expose implementation vocabulary to a customer.
+    customer_response_policy = CustomerFacingResponsePolicy(
+        delegate=conversation_os,
+        ledger_repository=conversation_os_ledger,
+    )
+    container.customer_facing_response_policy = customer_response_policy
+    container.conversation_service = customer_response_policy
 
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
