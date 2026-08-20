@@ -11,97 +11,53 @@ class FakeDelegate:
         return "✅ understood"
 
 
-class FakeExtractor:
-    def extract(self, message: str) -> dict:
-        lowered = message.casefold()
-        if "electrician" in lowered:
-            return {
-                "success": True,
-                "request": {
-                    "side": "NEED",
-                    "domain": "SERVICE",
-                    "subject": "electrician",
-                    "quantity": None,
-                    "unit": None,
-                    "price": None,
-                    "currency": None,
-                    "when_text": None,
-                    "location_text": None,
-                    "constraints": [],
-                    "confidence": 0.98,
-                },
-            }
-        return {
-            "success": True,
-            "request": {
-                "side": "NEED",
-                "domain": "PRODUCT",
-                "subject": "chicken",
-                "quantity": 10,
-                "unit": "kg",
-                "price": None,
-                "currency": None,
-                "when_text": None,
-                "location_text": None,
-                "constraints": [],
-                "confidence": 0.97,
-            },
-        }
-
-
 def build_service(tmp_path):
     delegate = FakeDelegate()
     ledger = ConversationTurnLedgerRepository(str(tmp_path / "conversation-os.db"))
     service = ConversationOSRuntimeService(
         delegate=delegate,
         ledger_repository=ledger,
-        request_extractor=FakeExtractor(),
+        request_extractor=None,
     )
     return service, delegate, ledger
 
 
-def test_runtime_preserves_active_request_for_short_variant_followup(tmp_path):
+def test_first_turn_is_not_delayed_or_rewritten(tmp_path):
     service, delegate, ledger = build_service(tmp_path)
+    original = "నాకు 10 కేజీల చికెన్ కావాలి"
 
+    reply = service.process("buyer-1", original)
+
+    assert reply == "✅ understood"
+    assert delegate.messages == [("buyer-1", original)]
+    state = ledger.load_state("buyer-1")
+    assert state["active_entity"] == "current request"
+    assert state["known_fields"]["request_text"] == original
+
+
+def test_short_variant_followup_keeps_original_request_context(tmp_path):
+    service, delegate, ledger = build_service(tmp_path)
     service.process("buyer-1", "నాకు 10 కేజీల చికెన్ కావాలి")
-    first = ledger.load_state("buyer-1")
-    assert first["active_entity"] == "chicken"
-    assert first["known_fields"]["quantity"] == 10
-    assert first["known_fields"]["unit"] == "kg"
 
     service.process("buyer-1", "బోన్లెస్ కావాలి")
-    second = ledger.load_state("buyer-1")
     routed = delegate.messages[-1][1]
+    state = ledger.load_state("buyer-1")
 
-    assert second["active_entity"] == "chicken"
-    assert second["known_fields"]["quantity"] == 10
-    assert "బోన్లెస్ కావాలి" in second["known_fields"]["constraints"]
-    assert "chicken" in routed
-    assert "quantity=10" in routed
-    assert "బోన్లెస్ కావాలి" in routed
+    assert "Original user request: నాకు 10 కేజీల చికెన్ కావాలి" in routed
+    assert "User's new message: బోన్లెస్ కావాలి" in routed
+    assert "బోన్లెస్ కావాలి" in state["known_fields"]["constraints"]
     assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "UPDATE_EXISTING"
 
 
-def test_runtime_switches_context_for_explicit_new_subject(tmp_path):
+def test_contextual_question_keeps_previous_user_and_bot_turn(tmp_path):
     service, delegate, ledger = build_service(tmp_path)
-
-    service.process("buyer-1", "నాకు 10 కేజీల చికెన్ కావాలి")
-    service.process("buyer-1", "నాకు electrician కూడా కావాలి")
-
-    state = ledger.load_state("buyer-1")
-    assert state["active_entity"] == "electrician"
-    assert state["active_flow"] == "SERVICE_NEED"
-    assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "NEW_TOPIC"
-    assert delegate.messages[-1][1] == "నాకు electrician కూడా కావాలి"
-
-
-def test_runtime_uses_previous_bot_reply_for_contextual_question(tmp_path):
-    service, delegate, ledger = build_service(tmp_path)
-    service.process("buyer-1", "నాకు 10 కేజీల చికెన్ కావాలి")
+    service.process("buyer-1", "10 kg chicken కావాలి")
+    service.process("buyer-1", "బోన్లెస్ కావాలి")
 
     service.process("buyer-1", "రేట్ ఎంత?")
     routed = delegate.messages[-1][1]
 
+    assert "Original user request: 10 kg chicken కావాలి" in routed
     assert "Previous PODX reply context: ✅ understood" in routed
     assert "User's new message: రేట్ ఎంత?" in routed
     assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "QUESTION"
