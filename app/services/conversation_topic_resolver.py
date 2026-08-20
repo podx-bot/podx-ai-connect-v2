@@ -31,11 +31,11 @@ class ConversationTopicResolver:
             if self._contains_subject(active, clean):
                 return "CONTINUE"
             return "NEW_TOPIC"
-        if any(marker in clean for marker in self.FOLLOWUP_MARKERS):
+        if any(self._normalize(marker) in clean for marker in self.FOLLOWUP_MARKERS):
             return "CONTINUE"
         if self._contains_subject(active, clean):
             return "CONTINUE"
-        if any(marker in clean for marker in self.NEW_TOPIC_MARKERS):
+        if any(self._normalize(marker) in clean for marker in self.NEW_TOPIC_MARKERS):
             return "POSSIBLE_NEW_TOPIC"
         if len(clean.split()) <= 4:
             return "AMBIGUOUS_FOLLOWUP"
@@ -61,5 +61,8 @@ class ConversationTopicResolver:
     @staticmethod
     def _normalize(value: Any) -> str:
         text = str(value or "").casefold().strip()
-        text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+        # Python's generic \w handling can split Indic combining marks. Preserve
+        # complete Telugu/Devanagari code-point ranges so short natural follow-ups
+        # such as "బోన్లెస్ కావాలి" survive normalization intact.
+        text = re.sub(r"[^\w\s\u0C00-\u0C7F\u0900-\u097F]+", " ", text, flags=re.UNICODE)
         return " ".join(text.split())
