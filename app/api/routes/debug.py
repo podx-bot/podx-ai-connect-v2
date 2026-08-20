@@ -31,6 +31,64 @@ def debug_message(
     }
 
 
+@router.get("/whatsapp-diagnostics")
+def whatsapp_diagnostics(request: Request) -> dict:
+    """Expose non-secret checkpoints for live WhatsApp delivery diagnosis.
+
+    This endpoint deliberately returns counts/timestamps only. It never exposes
+    phone numbers, message text, access tokens, provider IDs, or conversation
+    contents, so production reachability can be diagnosed safely.
+    """
+    container = request.app.state.container
+    db = container.database
+
+    def snapshot(table: str) -> dict:
+        try:
+            row = db.fetchone(
+                f"SELECT COUNT(*) AS total, MAX(created_at) AS last_at FROM {table}"
+            )
+            return {
+                "ok": True,
+                "total": int(row["total"] or 0) if row else 0,
+                "last_at": row["last_at"] if row else None,
+            }
+        except Exception as error:
+            return {
+                "ok": False,
+                "total": None,
+                "last_at": None,
+                "error": f"{type(error).__name__}: {error}",
+            }
+
+    inbound = snapshot("inbound_messages")
+    delivery = snapshot("delivery_statuses")
+    turns = snapshot("conversation_os_turns")
+
+    checks = {
+        "database_ok": bool(db.health_check()),
+        "whatsapp_configured": bool(container.whatsapp_service.is_configured()),
+        "conversation_os_attached": bool(getattr(container, "conversation_os_runtime_service", None)),
+        "inbound_table_ok": bool(inbound.get("ok")),
+        "delivery_table_ok": bool(delivery.get("ok")),
+        "conversation_turn_table_ok": bool(turns.get("ok")),
+    }
+
+    return {
+        "status": "READY" if all(checks.values()) else "DEGRADED",
+        "checks": checks,
+        "checkpoints": {
+            "inbound_messages": inbound,
+            "delivery_statuses": delivery,
+            "conversation_turns": turns,
+        },
+        "interpretation": {
+            "inbound_not_changing": "Meta webhook is not reaching or not being parsed/claimed by PODX.",
+            "inbound_changes_turns_do_not": "Webhook arrives but conversation runtime is not completing.",
+            "turns_change_delivery_does_not": "PODX creates a reply but outbound Meta delivery needs inspection.",
+        },
+    }
+
+
 @router.get("/voice-readiness")
 def voice_readiness(request: Request) -> dict:
     """Return non-secret runtime readiness for the Voice V2 outbound pipeline."""
