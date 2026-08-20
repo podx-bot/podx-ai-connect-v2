@@ -17,6 +17,30 @@ def test_short_variant_followup_updates_active_product():
     assert decision.state.known_fields["quantity"] == 10
 
 
+def test_short_quantity_followup_updates_active_product():
+    kernel = ConversationKernel()
+    state = ConversationState(user_id="buyer-1", active_entity="chicken")
+    decision = kernel.resolve("buyer-1", "25 కేజీలు కావాలి", state)
+    assert decision.kind == TurnKind.UPDATE_EXISTING
+    assert decision.next_action == "merge_active_state"
+
+
+def test_explicit_new_telugu_product_request_is_not_swallowed_by_active_context():
+    kernel = ConversationKernel()
+    state = ConversationState(user_id="buyer-1", active_entity="current request")
+    decision = kernel.resolve("buyer-1", "నాకు 25 కేజీల బాస్మతి రైస్ కావాలి", state)
+    assert decision.kind == TurnKind.NEW_REQUEST
+    assert decision.next_action == "route_new_request"
+
+
+def test_strong_long_change_message_stays_in_active_context():
+    kernel = ConversationKernel()
+    state = ConversationState(user_id="buyer-1", active_entity="chicken")
+    decision = kernel.resolve("buyer-1", "rate 210 చేయండి, skinless కావాలి", state)
+    assert decision.kind == TurnKind.UPDATE_EXISTING
+    assert decision.next_action == "merge_active_state"
+
+
 def test_yes_is_resolved_against_previous_expected_reply():
     kernel = ConversationKernel()
     state = ConversationState(
