@@ -27,7 +27,6 @@ from app.services.runtime_complaint_prevention_service import RuntimeComplaintPr
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
 from app.services.universal_correction_service import UniversalCorrectionService
 from app.services.universal_profile_summary_service import UniversalProfileSummaryService
-from app.services.universal_request_extractor import UniversalRequestExtractor
 
 
 def create_app() -> FastAPI:
@@ -141,18 +140,15 @@ def create_app() -> FastAPI:
     )
     container.runtime_complaint_prevention_service = quality_guard
 
-    # Conversation OS is the outermost text/voice conversation gate. It sees the
-    # previous PODX turn and active state before any legacy/domain runtime can
-    # claim the current message. The same persistent state is channel-neutral so
-    # app/web adapters can reuse it later.
+    # Conversation OS stays on the synchronous WhatsApp hot path, so it must not
+    # add a second blocking model call before the existing runtime can answer.
+    # It builds continuity from the durable turn ledger and raw prior turn; deeper
+    # semantic enrichment belongs off the reply-critical path.
     conversation_os_ledger = ConversationTurnLedgerRepository(container.settings.database_path)
     conversation_os = ConversationOSRuntimeService(
         delegate=quality_guard,
         ledger_repository=conversation_os_ledger,
-        request_extractor=UniversalRequestExtractor(
-            api_key=container.settings.gemini_api_key,
-            model=container.settings.gemini_voice_model,
-        ),
+        request_extractor=None,
         channel="whatsapp",
     )
     container.conversation_turn_ledger_repository = conversation_os_ledger
