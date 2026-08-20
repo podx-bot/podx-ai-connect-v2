@@ -9,6 +9,24 @@ def test_new_product_does_not_mutate_old_product_context():
     assert router.introduces_new_subject(chicken, "5 kg rice bag 300rs only pickup sonarice") is True
 
 
+def test_telugu_new_subject_does_not_mutate_old_product_context():
+    router = UniversalContextRouter()
+    chicken = {"subject": "chicken", "domain": "PRODUCT"}
+
+    # Exact live-regression shape: an explicit Telugu rice request must not be
+    # swallowed by an older chicken deal just because the nouns are non-Latin.
+    assert router.introduces_new_subject(chicken, "నాకు 25 కేజీల బాస్మతి రైస్ కావాలి") is True
+
+
+def test_multilingual_attribute_only_followup_stays_in_current_deal():
+    router = UniversalContextRouter()
+    rice = {"subject": "బాస్మతి రైస్", "domain": "PRODUCT"}
+
+    assert router.introduces_new_subject(rice, "25 కేజీలు కావాలి") is False
+    assert router.introduces_new_subject(rice, "ధర ఎంత?") is False
+    assert router.introduces_new_subject({"subject": "चावल", "domain": "PRODUCT"}, "5 किलो चाहिए") is False
+
+
 def test_attribute_only_followup_stays_in_current_deal():
     router = UniversalContextRouter()
     chicken = {"subject": "fresh skinless chicken", "domain": "PRODUCT"}
