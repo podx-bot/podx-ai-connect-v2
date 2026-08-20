@@ -1,12 +1,8 @@
 """Production runtime gate for PODX Conversation OS.
 
-The gate sits outside legacy/domain conversation runtimes. It loads persistent
-conversation state before routing a message, resolves whether the turn is a new
-request or a continuation, gives short follow-ups enough active context for the
-existing runtimes, and persists the completed turn afterwards.
-
-It is deliberately fail-open: Conversation OS state or extraction failures must
-never make the WhatsApp conversation unavailable.
+This layer must never add a second blocking AI call on the synchronous WhatsApp
+reply path. It keeps durable turn context around the existing production runtime
+and enriches short follow-ups from the previous user/PODX turn.
 """
 from __future__ import annotations
 
@@ -43,38 +39,35 @@ class ConversationOSRuntimeService:
         try:
             state_dict = self.ledger.load_state(user_id) or self._blank_state(user_id)
             state = self._state_from_dict(user_id, state_dict)
-            extracted = self._extract_if_useful(clean, state)
-            request = extracted.get("request") if extracted.get("success") else None
 
-            topic = self.topic_resolver.resolve(
-                state.active_entity,
-                clean,
-                request if isinstance(request, dict) else None,
-            )
-            if request and (not state.active_entity or topic == "NEW_TOPIC"):
-                state_dict = self._seed_request_state(state_dict, request, clean)
-                state = self._state_from_dict(user_id, state_dict)
-
+            # Never require semantic extraction to create a reply. On the WhatsApp
+            # hot path, continuity is resolved from durable state + raw prior turn.
+            topic = self.topic_resolver.resolve(state.active_entity, clean, None)
             decision = self.kernel.resolve(user_id, clean, state)
-            if topic == "NEW_TOPIC" and request:
-                decision.kind = TurnKind.NEW_TOPIC
-                decision.next_action = "route_new_request"
-                decision.confidence = max(decision.confidence, float(request.get("confidence") or 0.0))
-            elif topic == "CONTINUE" and state.active_entity and decision.kind == TurnKind.NEW_REQUEST:
-                # Short natural follow-ups can contain words such as "కావాలి" without
-                # being a new demand. Topic continuity is authoritative here.
+            if topic == "CONTINUE" and state.active_entity and decision.kind == TurnKind.NEW_REQUEST:
                 decision.kind = TurnKind.UPDATE_EXISTING
                 decision.next_action = "merge_active_state"
                 decision.confidence = max(decision.confidence, 0.88)
 
-            state_dict = self._merge_followup_facts(state_dict, clean, request, decision.kind)
+            state_dict = self._merge_followup_facts(state_dict, clean, None, decision.kind)
             routed_message = self._planned_message(clean, state_dict, decision.kind)
             reply = self._delegate(user_id, routed_message)
             validated = self.kernel.validate_reply(decision, reply)
             if validated is None:
-                # Do not manufacture an answer. Preserve old behavior as a final
-                # fail-open attempt using the exact user text.
                 validated = str(self._delegate(user_id, clean) or "").strip()
+
+            # A successful first turn becomes the durable conversation anchor even
+            # without an extra model call. This is enough for short follow-ups such
+            # as "బోన్లెస్ కావాలి" and "రేట్ ఎంత?" to retain the original request.
+            if not state_dict.get("active_entity") and clean:
+                state_dict = self.merge_engine.merge_state(
+                    state_dict,
+                    {
+                        "active_flow": "ACTIVE_CONVERSATION",
+                        "active_entity": "current request",
+                        "known_fields": {"request_text": clean},
+                    },
+                )
 
             final_state = self.merge_engine.merge_state(
                 state_dict,
@@ -99,8 +92,7 @@ class ConversationOSRuntimeService:
             )
             return validated
         except Exception:
-            # Conversation memory is a reliability layer, not a new single point of
-            # failure. Existing production routing remains available on any error.
+            # Memory is a reliability layer, never a single point of failure.
             return self._delegate(user_id, clean)
 
     def _delegate(self, user_id: str, message: str) -> str:
@@ -108,47 +100,6 @@ class ConversationOSRuntimeService:
             return self.delegate.process(sender_mobile=user_id, message=message)
         except TypeError:
             return self.delegate.process(user_id, message)
-
-    def _extract_if_useful(self, message: str, state: ConversationState) -> Dict[str, Any]:
-        if self.request_extractor is None or not message:
-            return {"success": False, "request": None}
-        # Extraction is most valuable on a new demand or when a user explicitly
-        # signals another topic. Avoid an AI call for obvious short follow-ups.
-        lowered = message.casefold()
-        explicit_switch = any(marker in lowered for marker in self.topic_resolver.NEW_TOPIC_MARKERS)
-        obvious_followup = state.active_entity and any(
-            marker in lowered for marker in self.topic_resolver.FOLLOWUP_MARKERS
-        )
-        if obvious_followup and not explicit_switch:
-            return {"success": False, "request": None}
-        try:
-            result = self.request_extractor.extract(message)
-            return result if isinstance(result, dict) else {"success": False, "request": None}
-        except Exception:
-            return {"success": False, "request": None}
-
-    def _seed_request_state(self, state: Dict[str, Any], request: Dict[str, Any], message: str) -> Dict[str, Any]:
-        side = str(request.get("side") or "").upper()
-        domain = str(request.get("domain") or "").upper()
-        subject = str(request.get("subject") or "").strip() or None
-        goal = "BUY" if side == "NEED" and domain == "PRODUCT" else side or state.get("goal")
-        known = {
-            key: request.get(key)
-            for key in (
-                "side", "domain", "quantity", "unit", "price", "currency",
-                "when_text", "location_text", "constraints",
-            )
-            if request.get(key) not in (None, "", [], {})
-        }
-        patch = {
-            "goal": goal,
-            "active_flow": f"{domain}_{side}" if domain and side else state.get("active_flow"),
-            "active_entity": subject,
-            "known_fields": known,
-            "last_user_message": message,
-            "pending_action": "route_new_request",
-        }
-        return self.merge_engine.merge_state(state, patch)
 
     def _merge_followup_facts(
         self,
@@ -160,26 +111,11 @@ class ConversationOSRuntimeService:
         if kind not in {TurnKind.UPDATE_EXISTING, TurnKind.CLARIFICATION, TurnKind.QUESTION, TurnKind.CONFIRMATION}:
             return state
         patch: Dict[str, Any] = {"last_user_message": message}
-        # When a semantic extractor produced compatible facts, merge fields but do
-        # not replace the active subject. Empty extracted values cannot erase state.
-        if request:
-            incoming = {
-                key: request.get(key)
-                for key in (
-                    "quantity", "unit", "price", "currency", "when_text",
-                    "location_text", "constraints",
-                )
-                if request.get(key) not in (None, "", [], {})
-            }
-            patch["known_fields"] = incoming
-        else:
-            # Preserve a generic, domain-neutral record of the user's explicit
-            # follow-up so downstream tools can use it without hard-coding products.
-            known = dict(state.get("known_fields") or {})
-            constraints = list(known.get("constraints") or [])
-            if message and message not in constraints:
-                constraints.append(message)
-            patch["known_fields"] = {"constraints": constraints}
+        known = dict(state.get("known_fields") or {})
+        constraints = list(known.get("constraints") or [])
+        if message and message not in constraints:
+            constraints.append(message)
+        patch["known_fields"] = {"constraints": constraints}
         return self.merge_engine.merge_state(state, patch)
 
     def _planned_message(self, original: str, state: Dict[str, Any], kind: TurnKind) -> str:
@@ -188,20 +124,23 @@ class ConversationOSRuntimeService:
         entity = str(state.get("active_entity") or "current request")
         facts = state.get("known_fields") or {}
         fact_text = self._compact_facts(facts)
-        previous = str(state.get("last_bot_message") or "").strip()
-        pieces = [f"Continue the existing {entity} request."]
+        previous_user = str(facts.get("request_text") or "").strip()
+        previous_bot = str(state.get("last_bot_message") or "").strip()
+        pieces = [f"Continue the existing {entity}."]
+        if previous_user:
+            pieces.append(f"Original user request: {previous_user}")
         if fact_text:
             pieces.append(f"Keep known details: {fact_text}.")
-        if previous:
-            pieces.append(f"Previous PODX reply context: {previous}")
+        if previous_bot:
+            pieces.append(f"Previous PODX reply context: {previous_bot}")
         pieces.append(f"User's new message: {original}")
         return " ".join(pieces)
 
     @staticmethod
     def _compact_facts(facts: Dict[str, Any]) -> str:
         preferred = (
-            "quantity", "unit", "price", "currency", "variant", "quality",
-            "when_text", "location_text", "side", "domain",
+            "request_text", "quantity", "unit", "price", "currency", "variant",
+            "quality", "when_text", "location_text", "side", "domain",
         )
         values = []
         for key in preferred:
