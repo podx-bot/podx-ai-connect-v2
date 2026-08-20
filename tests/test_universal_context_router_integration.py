@@ -55,6 +55,17 @@ def test_new_subject_bypasses_old_pending_deal(tmp_path):
     assert not whatsapp.buttons
 
 
+def test_telugu_new_subject_bypasses_old_pending_deal(tmp_path):
+    _, _, whatsapp, commands, _ = _build_pending_chicken_deal(tmp_path)
+
+    reply = commands.process_text("seller", "నాకు 25 కేజీల బాస్మతి రైస్ కావాలి")
+
+    # This is the production regression: the old chicken state must not consume
+    # an explicit new rice request. None means routing can continue to live capture.
+    assert reply is None
+    assert not whatsapp.buttons
+
+
 def test_attribute_only_reply_still_updates_current_deal(tmp_path):
     _, _, whatsapp, commands, _ = _build_pending_chicken_deal(tmp_path)
 
