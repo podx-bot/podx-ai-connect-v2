@@ -19,6 +19,7 @@ class UniversalContextRouter:
     DETAIL_WORDS = {
         "price", "rate", "quality", "type", "variant", "brand", "model", "size",
         "fresh", "premium", "new", "used", "sealed", "original", "available",
+        "skinless", "boneless", "with", "without", "change", "update", "instead",
         "today", "tomorrow", "delivery", "pickup", "pick", "only", "per",
         "kg", "kgs", "kilogram", "kilograms", "g", "gm", "gms", "gram", "grams",
         "l", "ltr", "litre", "litres", "liter", "liters", "ml",
@@ -26,15 +27,16 @@ class UniversalContextRouter:
         "pack", "packs", "packet", "packets", "box", "boxes",
         "rs", "inr", "rupees", "need", "want", "have", "sell", "selling",
         "buy", "buying", "good", "best",
-        # Telugu/Hindi conversational detail words. These are deliberately
-        # domain-neutral: they describe quantity, timing, fulfilment or intent,
-        # not a particular product/service.
-        "కావాలి", "ఉంది", "ఉందా", "ఇవ్వండి", "తీసుకుంటాను",
+        # Telugu/Hindi conversational detail/change words. These are deliberately
+        # domain-neutral where possible: they describe quantity, timing,
+        # fulfilment, modification or intent rather than naming a subject.
+        "కావాలి", "ఉంది", "ఉందా", "ఇవ్వండి", "తీసుకుంటాను", "చేయండి", "మార్చండి", "మార్చు",
         "కేజీ", "కేజీలు", "కేజీల", "కిలో", "కిలోలు", "గ్రాము", "గ్రాములు",
         "లీటర్", "లీటర్లు", "పీస్", "పీసులు", "ప్యాక్", "ప్యాకెట్లు", "బ్యాగ్", "బ్యాగులు",
         "డెలివరీ", "పికప్", "ఈరోజు", "రేపు", "ధర", "రేట్", "క్వాలిటీ",
-        "चाहिए", "चाहिये", "लेना", "देना", "किलो", "किलोग्राम", "ग्राम", "लीटर",
-        "पीस", "पैक", "बैग", "डिलीवरी", "पिकअप", "आज", "कल", "कीमत", "रेट",
+        "चाहिए", "चाहिये", "लेना", "देना", "करो", "करें", "बदलो", "बदलें",
+        "किलो", "किलोग्राम", "ग्राम", "लीटर", "पीस", "पैक", "बैग",
+        "डिलीवरी", "पिकअप", "आज", "कल", "कीमत", "रेट",
     }
     PACKAGE_WORDS = {
         "bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes",
