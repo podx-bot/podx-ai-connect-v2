@@ -11,6 +11,7 @@ AI provider is unavailable.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Callable, Optional
 
 
@@ -18,6 +19,7 @@ class UniversalContextRouter:
     DETAIL_WORDS = {
         "price", "rate", "quality", "type", "variant", "brand", "model", "size",
         "fresh", "premium", "new", "used", "sealed", "original", "available",
+        "skinless", "boneless", "with", "without", "change", "update", "instead",
         "today", "tomorrow", "delivery", "pickup", "pick", "only", "per",
         "kg", "kgs", "kilogram", "kilograms", "g", "gm", "gms", "gram", "grams",
         "l", "ltr", "litre", "litres", "liter", "liters", "ml",
@@ -25,10 +27,23 @@ class UniversalContextRouter:
         "pack", "packs", "packet", "packets", "box", "boxes",
         "rs", "inr", "rupees", "need", "want", "have", "sell", "selling",
         "buy", "buying", "good", "best",
+        # Telugu/Hindi conversational detail/change words. These are deliberately
+        # domain-neutral where possible: they describe quantity, timing,
+        # fulfilment, modification or intent rather than naming a subject.
+        "కావాలి", "ఉంది", "ఉందా", "ఇవ్వండి", "తీసుకుంటాను", "చేయండి", "మార్చండి", "మార్చు",
+        "కేజీ", "కేజీలు", "కేజీల", "కిలో", "కిలోలు", "గ్రాము", "గ్రాములు",
+        "లీటర్", "లీటర్లు", "పీస్", "పీసులు", "ప్యాక్", "ప్యాకెట్లు", "బ్యాగ్", "బ్యాగులు",
+        "డెలివరీ", "పికప్", "ఈరోజు", "రేపు", "ధర", "రేట్", "క్వాలిటీ",
+        "चाहिए", "चाहिये", "लेना", "देना", "करो", "करें", "बदलो", "बदलें",
+        "किलो", "किलोग्राम", "ग्राम", "लीटर", "पीस", "पैक", "बैग",
+        "डिलीवरी", "पिकअप", "आज", "कल", "कीमत", "रेट",
     }
     PACKAGE_WORDS = {
         "bag", "bags", "pack", "packs", "packet", "packets", "box", "boxes",
         "piece", "pieces", "pc", "pcs", "unit", "units",
+        "కేజీ", "కేజీలు", "కేజీల", "కిలో", "కిలోలు", "పీస్", "పీసులు", "ప్యాక్",
+        "ప్యాకెట్లు", "బ్యాగ్", "బ్యాగులు",
+        "किलो", "किलोग्राम", "पीस", "पैक", "बैग",
     }
     QUESTION_MARKERS = (
         "?", "how", "what", "which", "why", "when", "where", "price?", "rate?",
@@ -44,10 +59,35 @@ class UniversalContextRouter:
 
     @staticmethod
     def _tokens(value: Any) -> set[str]:
-        return {
-            token.casefold()
-            for token in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", str(value or ""))
-        }
+        """Return Unicode-aware word tokens while preserving Indic combining marks.
+
+        Python ``re`` word-boundary patterns split Telugu/Hindi grapheme clusters
+        around combining marks, and the previous ASCII-only tokenizer ignored them
+        entirely. A small category-based scanner keeps letters + marks together so
+        multilingual requests participate in the same context-isolation rules.
+        Numeric-only chunks are intentionally excluded.
+        """
+        tokens: set[str] = set()
+        current: list[str] = []
+
+        def flush() -> None:
+            if not current:
+                return
+            token = "".join(current).strip("-").casefold()
+            current.clear()
+            if not token:
+                return
+            if any(unicodedata.category(char).startswith("L") for char in token):
+                tokens.add(token)
+
+        for char in str(value or ""):
+            category = unicodedata.category(char)
+            if category[:1] in {"L", "M", "N"} or char == "-":
+                current.append(char)
+            else:
+                flush()
+        flush()
+        return tokens
 
     @staticmethod
     def _subject_is_mentioned(subject_tokens: set[str], message_tokens: set[str]) -> bool:
