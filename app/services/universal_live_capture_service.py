@@ -24,6 +24,21 @@ class UniversalLiveCaptureService:
         "please", "want", "need", "i want", "i need", "want it", "need it",
         "चाहिए", "मुझे चाहिए",
     }
+    VARIANT_FOLLOWUPS = {
+        "boneless": "boneless",
+        "బోన్లెస్": "boneless",
+        "బోన్‌లెస్": "boneless",
+        "बोनलेस": "boneless",
+        "skinless": "skinless",
+        "స్కిన్‌లెస్": "skinless",
+        "స్కిన్లెస్": "skinless",
+        "स्किनलेस": "skinless",
+    }
+    VARIANT_FOLLOWUP_FILLERS = {
+        "", "కావాలి", "నాకు కావాలి", "చాలు", "సరిపోతుంది",
+        "please", "want", "need", "i want", "i need", "want it", "need it",
+        "చేయండి", "ఉండాలి", "चाहिए", "मुझे चाहिए",
+    }
 
     def __init__(self, extractor, demand_repository, matcher, targeting_service,
                  notification_service, notification_repository, user_repository,
@@ -52,6 +67,16 @@ class UniversalLiveCaptureService:
                 sender_mobile=sender_mobile,
                 quantity=quantity_followup[0],
                 unit=quantity_followup[1],
+            )
+            if reply is not None:
+                return reply
+
+        variant_followup = self._variant_followup(text)
+        if variant_followup is not None:
+            reply = self._revise_latest_constraint(
+                sender_mobile=sender_mobile,
+                key="variant",
+                value=variant_followup,
             )
             if reply is not None:
                 return reply
@@ -152,6 +177,59 @@ class UniversalLiveCaptureService:
         result = self._match_target_notify(stored)
         return f"🔄 {subject} quantity {quantity_text}కి update చేశాను.\n{result}"
 
+    def _revise_latest_constraint(self, sender_mobile: str, key: str, value: str) -> Optional[str]:
+        latest = getattr(self.demands, "latest_active_for_user", None)
+        if not callable(latest):
+            return None
+        previous = latest(sender_mobile)
+        if previous is None or str(previous.get("domain") or "").upper() != "PRODUCT":
+            return None
+
+        raw_constraints = previous.get("constraints")
+        if isinstance(raw_constraints, dict):
+            constraints = dict(raw_constraints)
+        elif isinstance(raw_constraints, list):
+            constraints = {"preferences": list(raw_constraints)} if raw_constraints else {}
+        else:
+            constraints = {}
+        constraints[str(key)] = str(value)
+
+        revised = {
+            "user_id": str(sender_mobile),
+            "side": previous.get("side"),
+            "domain": previous.get("domain"),
+            "subject": previous.get("subject"),
+            "quantity": previous.get("quantity"),
+            "unit": previous.get("unit"),
+            "price": previous.get("price"),
+            "currency": previous.get("currency"),
+            "when_text": previous.get("when_text"),
+            "latitude": previous.get("latitude"),
+            "longitude": previous.get("longitude"),
+            "location_text": previous.get("location_text"),
+            "constraints": constraints,
+            "source": "text",
+            "media_ref": None,
+            "status": "ACTIVE",
+        }
+        request_id = self.demands.create(revised)
+        self.demands.update_status(int(previous["id"]), "REVISED")
+        stored = self.demands.get(request_id) or {**revised, "id": request_id}
+        subject = str(stored.get("subject") or "మీ requirement")
+
+        if stored.get("latitude") is None or stored.get("longitude") is None:
+            return (
+                f"🔄 {subject} requestకి {value} preference add చేశాను. "
+                "ముందు చెప్పిన quantity/details అలాగే ఉంచాను. Match కోసం Current Location share చేయండి."
+            )
+
+        self._trigger_demand_intelligence(stored)
+        result = self._match_target_notify(stored)
+        return (
+            f"🔄 {subject} requestకి {value} preference add చేశాను. "
+            f"ముందు చెప్పిన quantity/details అలాగే ఉంచాను.\n{result}"
+        )
+
     def _trigger_demand_intelligence(self, request: Dict[str, Any]) -> None:
         if self.demand_intelligence is None:
             return
@@ -233,6 +311,22 @@ class UniversalLiveCaptureService:
         if quantity <= 0:
             return None
         return quantity, "kg"
+
+    @classmethod
+    def _variant_followup(cls, text: str) -> Optional[str]:
+        normalized = " ".join(str(text or "").casefold().split()).strip(" .,!?:;")
+        allowed_fillers = {
+            item.casefold().strip(" .,!?:;") for item in cls.VARIANT_FOLLOWUP_FILLERS
+        }
+        for phrase, canonical in sorted(cls.VARIANT_FOLLOWUPS.items(), key=lambda item: len(item[0]), reverse=True):
+            phrase_low = phrase.casefold()
+            if phrase_low not in normalized:
+                continue
+            remaining = normalized.replace(phrase_low, " ", 1)
+            remaining = " ".join(remaining.split()).strip(" .,!?:;")
+            if remaining in allowed_fillers:
+                return canonical
+        return None
 
     @classmethod
     def _skip_text(cls, text: str) -> bool:
