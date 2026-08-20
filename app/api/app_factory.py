@@ -6,10 +6,12 @@ from app.api.routes.fast_webhook import router as webhook_router
 from app.api.routes.health import router as health_router
 from app.core.universal_commerce_container import UniversalCommerceAppContainer
 from app.repositories.conversation_observability_repository import ConversationObservabilityRepository
+from app.repositories.conversation_turn_ledger_repository import ConversationTurnLedgerRepository
 from app.repositories.driver_kyc_repository import DriverKYCRepository
 from app.repositories.podx_meet_repository import PodxMeetRepository
 from app.services.admin_monitoring_runtime_service import AdminMonitoringRuntimeService
 from app.services.admin_monitoring_service import AdminMonitoringService
+from app.services.conversation_os_runtime_service import ConversationOSRuntimeService
 from app.services.domain_complaint_prevention_service import DomainComplaintPreventionService
 from app.services.driver_kyc_runtime_service import DriverKYCAwareConversationService, DriverKYCRuntimeService
 from app.services.dynamic_role_profile_attachment_service import DynamicRoleProfileAttachmentService
@@ -25,6 +27,7 @@ from app.services.runtime_complaint_prevention_service import RuntimeComplaintPr
 from app.services.universal_category_flow_brain import UniversalCategoryFlowBrain
 from app.services.universal_correction_service import UniversalCorrectionService
 from app.services.universal_profile_summary_service import UniversalProfileSummaryService
+from app.services.universal_request_extractor import UniversalRequestExtractor
 
 
 def create_app() -> FastAPI:
@@ -137,7 +140,24 @@ def create_app() -> FastAPI:
         observability_repository=observability_repository,
     )
     container.runtime_complaint_prevention_service = quality_guard
-    container.conversation_service = quality_guard
+
+    # Conversation OS is the outermost text/voice conversation gate. It sees the
+    # previous PODX turn and active state before any legacy/domain runtime can
+    # claim the current message. The same persistent state is channel-neutral so
+    # app/web adapters can reuse it later.
+    conversation_os_ledger = ConversationTurnLedgerRepository(container.settings.database_path)
+    conversation_os = ConversationOSRuntimeService(
+        delegate=quality_guard,
+        ledger_repository=conversation_os_ledger,
+        request_extractor=UniversalRequestExtractor(
+            api_key=container.settings.gemini_api_key,
+            model=container.settings.gemini_voice_model,
+        ),
+        channel="whatsapp",
+    )
+    container.conversation_turn_ledger_repository = conversation_os_ledger
+    container.conversation_os_runtime_service = conversation_os
+    container.conversation_service = conversation_os
 
     app.state.container = container
     app.add_middleware(AppointmentLocationMiddleware, container=container)
