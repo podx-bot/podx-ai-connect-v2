@@ -56,10 +56,28 @@ class ConversationOSRuntimeService:
             if validated is None:
                 validated = str(self._delegate(user_id, clean) or "").strip()
 
+            # A new request must replace the durable request anchor. Otherwise a
+            # correctly routed new turn can still leave the previous subject in
+            # memory and poison the following message. Keep the generic active
+            # conversation envelope, but reset request-specific remembered facts.
+            if decision.kind in {TurnKind.NEW_REQUEST, TurnKind.NEW_TOPIC} and clean:
+                state_dict = self.merge_engine.merge_state(
+                    state_dict,
+                    {
+                        "active_flow": "ACTIVE_CONVERSATION",
+                        "active_entity": "current request",
+                        "known_fields": {
+                            "request_text": clean,
+                            "constraints": [],
+                        },
+                        "missing_fields": [],
+                        "expected_reply_type": None,
+                    },
+                )
             # A successful first turn becomes the durable conversation anchor even
             # without an extra model call. This is enough for short follow-ups such
             # as "బోన్లెస్ కావాలి" and "రేట్ ఎంత?" to retain the original request.
-            if not state_dict.get("active_entity") and clean:
+            elif not state_dict.get("active_entity") and clean:
                 state_dict = self.merge_engine.merge_state(
                     state_dict,
                     {

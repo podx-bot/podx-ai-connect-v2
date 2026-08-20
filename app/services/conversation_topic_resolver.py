@@ -11,11 +11,17 @@ class ConversationTopicResolver:
         "also need", "i also need", "ఇంకా కావాలి", "కూడా కావాలి", "మరొకటి",
         "another", "instead of that", "వేరే", "new request",
     )
-    FOLLOWUP_MARKERS = (
+    STRONG_FOLLOWUP_MARKERS = (
         "boneless", "బోన్లెస్", "fresh", "ఫ్రెష్", "skinless", "with bone",
-        "without bone", "kg", "kgs", "కేజీ", "కిలో", "rate", "price", "రేట్",
-        "ధర", "delivery", "pickup", "today", "tomorrow", "ఈరోజు", "రేపు",
+        "without bone", "change", "update", "make it", "చేయండి", "మార్చండి", "మార్చు",
+        "करो", "करें", "बदलो", "बदलें",
     )
+    WEAK_FOLLOWUP_MARKERS = (
+        "kg", "kgs", "కేజీ", "కిలో", "rate", "price", "రేట్", "ధర",
+        "delivery", "pickup", "today", "tomorrow", "ఈరోజు", "రేపు", "కావాలి",
+        "need", "want", "चाहिए", "चाहिये",
+    )
+    SHORT_FOLLOWUP_MAX_WORDS = 4
 
     def resolve(self, active_entity: str | None, message: str, extracted: Dict[str, Any] | None = None) -> str:
         clean = self._normalize(message)
@@ -31,13 +37,18 @@ class ConversationTopicResolver:
             if self._contains_subject(active, clean):
                 return "CONTINUE"
             return "NEW_TOPIC"
-        if any(self._normalize(marker) in clean for marker in self.FOLLOWUP_MARKERS):
-            return "CONTINUE"
         if self._contains_subject(active, clean):
+            return "CONTINUE"
+        if any(self._normalize(marker) in clean for marker in self.STRONG_FOLLOWUP_MARKERS):
+            return "CONTINUE"
+        if (
+            len(clean.split()) <= self.SHORT_FOLLOWUP_MAX_WORDS
+            and any(self._normalize(marker) in clean for marker in self.WEAK_FOLLOWUP_MARKERS)
+        ):
             return "CONTINUE"
         if any(self._normalize(marker) in clean for marker in self.NEW_TOPIC_MARKERS):
             return "POSSIBLE_NEW_TOPIC"
-        if len(clean.split()) <= 4:
+        if len(clean.split()) <= self.SHORT_FOLLOWUP_MAX_WORDS:
             return "AMBIGUOUS_FOLLOWUP"
         return "POSSIBLE_NEW_TOPIC"
 

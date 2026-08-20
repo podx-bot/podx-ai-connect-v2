@@ -49,6 +49,33 @@ def test_short_variant_followup_keeps_original_request_context(tmp_path):
     assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "UPDATE_EXISTING"
 
 
+def test_short_quantity_followup_keeps_original_request_context(tmp_path):
+    service, delegate, ledger = build_service(tmp_path)
+    service.process("buyer-1", "నాకు 10 కేజీల చికెన్ కావాలి")
+
+    service.process("buyer-1", "25 కేజీలు కావాలి")
+    routed = delegate.messages[-1][1]
+
+    assert "Original user request: నాకు 10 కేజీల చికెన్ కావాలి" in routed
+    assert "User's new message: 25 కేజీలు కావాలి" in routed
+    assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "UPDATE_EXISTING"
+
+
+def test_explicit_new_telugu_product_request_bypasses_stale_context(tmp_path):
+    service, delegate, ledger = build_service(tmp_path)
+    service.process("buyer-1", "నాకు 10 కేజీల చికెన్ కావాలి")
+
+    rice_request = "నాకు 25 కేజీల బాస్మతి రైస్ కావాలి"
+    service.process("buyer-1", rice_request)
+    routed = delegate.messages[-1][1]
+
+    assert routed == rice_request
+    assert "Original user request" not in routed
+    assert ledger.recent_turns("buyer-1")[0]["turn_kind"] == "NEW_REQUEST"
+    state = ledger.load_state("buyer-1")
+    assert state["known_fields"]["request_text"] == rice_request
+
+
 def test_contextual_question_keeps_previous_user_and_bot_turn(tmp_path):
     service, delegate, ledger = build_service(tmp_path)
     service.process("buyer-1", "10 kg chicken కావాలి")

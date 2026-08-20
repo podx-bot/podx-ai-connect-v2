@@ -60,10 +60,21 @@ class ConversationKernel:
     NO = {"no", "nope", "వద్దు", "లేదు", "కాదు", "नहीं"}
     CANCEL = {"cancel", "stop", "రద్దు", "వద్దు", "cancel it", "రద్దు చేయండి"}
     QUESTION_MARKERS = ("?", "ఎంత", "రేట్", "price", "ధర", "ఉందా", "available", "ఎప్పుడు", "when", "where", "ఎక్కడ")
-    UPDATE_MARKERS = (
-        "కావాలి", "చేయండి", "మార్చండి", "instead", "change", "make it", "update",
-        "boneless", "బోన్లెస్", "fresh", "ఫ్రెష్", "kg", "కేజీ", "కిలో",
+
+    # Strong markers communicate an actual modification/variant and therefore
+    # keep the active conversation even in a longer sentence. Weak markers such
+    # as quantity units or the generic Telugu word "కావాలి" are common in both
+    # follow-ups and completely new requests, so they only imply continuation
+    # for compact replies.
+    STRONG_UPDATE_MARKERS = (
+        "చేయండి", "మార్చండి", "మార్చు", "instead", "change", "make it", "update",
+        "boneless", "బోన్లెస్", "skinless", "fresh", "ఫ్రెష్", "with bone", "without bone",
+        "करो", "करें", "बदलो", "बदलें",
     )
+    WEAK_UPDATE_MARKERS = (
+        "కావాలి", "kg", "kgs", "కేజీ", "కిలో", "need", "want", "चाहिए", "चाहिये",
+    )
+    SHORT_FOLLOWUP_MAX_WORDS = 4
 
     def resolve(self, user_id: str, message: str, state: Optional[ConversationState] = None) -> TurnDecision:
         state = state or ConversationState(user_id=str(user_id))
@@ -80,8 +91,14 @@ class ConversationKernel:
             return TurnDecision(TurnKind.CONFIRMATION, clean, state, 0.99, meaning, state.pending_action)
         if any(marker in lowered for marker in self.QUESTION_MARKERS):
             return TurnDecision(TurnKind.QUESTION, clean, state, 0.90, clean, "answer_in_active_context")
-        if state.active_entity and any(marker in lowered for marker in self.UPDATE_MARKERS):
-            return TurnDecision(TurnKind.UPDATE_EXISTING, clean, state, 0.88, clean, "merge_active_state")
+        if state.active_entity and any(marker in lowered for marker in self.STRONG_UPDATE_MARKERS):
+            return TurnDecision(TurnKind.UPDATE_EXISTING, clean, state, 0.90, clean, "merge_active_state")
+        if (
+            state.active_entity
+            and len(clean.split()) <= self.SHORT_FOLLOWUP_MAX_WORDS
+            and any(marker in lowered for marker in self.WEAK_UPDATE_MARKERS)
+        ):
+            return TurnDecision(TurnKind.UPDATE_EXISTING, clean, state, 0.86, clean, "merge_active_state")
         if state.expected_reply_type:
             return TurnDecision(TurnKind.CLARIFICATION, clean, state, 0.75, clean, "resolve_expected_reply")
         return TurnDecision(TurnKind.NEW_REQUEST, clean, state, 0.70, clean, "route_new_request")
