@@ -282,20 +282,41 @@ class UniversalLiveCaptureService:
         step_name = str(getattr(getattr(session, "step", None), "name", ""))
         return not step_name or step_name in {"MAIN_MENU", "REGISTERED"}
 
+    @staticmethod
+    def _is_app_request(request: Dict[str, Any]) -> bool:
+        return str(request.get("user_id") or "").strip().casefold().startswith("app-")
+
     def _match_target_notify(self, request: Dict[str, Any], location_saved: bool = False) -> str:
         prefix = "📍 Location save అయింది. " if location_saved else ""
+        app_request = self._is_app_request(request)
         matches = self.matcher.find_matches(request, limit=10)
         if matches:
             targets = [{"user_id": str(item.get("user_id") or ""), "score": item.get("score"),
                         "distance_km": item.get("distance_km")}
                        for item in matches if item.get("user_id") and str(item.get("user_id")) != str(request.get("user_id"))]
+            side = str(request.get("side") or "").upper()
+
+            # App-originated requests use an internal app-* identity, not a WhatsApp
+            # phone number. Never send buyer match cards to Meta using that identity.
+            # The app receives the match result in this response; seller WhatsApp
+            # outreach belongs to the later explicit interest/confirmation stage.
+            if app_request:
+                if side == "NEED":
+                    return (
+                        f"{prefix}✅ {len(targets)} seller match{'es' if len(targets) != 1 else ''} దొరికాయి. "
+                        "Match result ASKODOX appలో readyగా ఉంది. నచ్చిన sellerపై Interested ఎంచుకున్న తర్వాత sellerకి notification వెళ్తుంది."
+                    )
+                return (
+                    f"{prefix}✅ {len(targets)} buyer match{'es' if len(targets) != 1 else ''} దొరికాయి. "
+                    "Match result ASKODOX appలో readyగా ఉంది. Buyer selection తర్వాత next notification flow కొనసాగుతుంది."
+                )
+
             plan = {"status": "TARGETED", "request_id": request.get("id"), "total_targets": len(targets),
                     "waves": [{"wave": 1, "radius_km": None, "targets": targets}]}
             delivery = self.notifications.dispatch_plan(request, plan)
             sent = int(delivery.get("sent") or 0)
             failed = int(delivery.get("failed") or 0)
             skipped = int(delivery.get("skipped_duplicate") or 0)
-            side = str(request.get("side") or "").upper()
             if sent > 0:
                 if side == "NEED":
                     return (f"{prefix}✅ {len(matches)} seller match{'es' if len(matches) != 1 else ''} దొరికాయి. "
@@ -313,7 +334,15 @@ class UniversalLiveCaptureService:
 
         already = self.notification_repository.contacted_user_ids(int(request["id"]))
         plan = self.targeting.build_plan(request=request, already_contacted_user_ids=already, per_wave_limit=25)
-        if int(plan.get("total_targets") or 0) > 0:
+        total_targets = int(plan.get("total_targets") or 0)
+        if total_targets > 0:
+            if app_request:
+                return (
+                    f"{prefix}Direct match ఇప్పుడే లేదు. కానీ {total_targets} relevant candidate"
+                    f"{'s' if total_targets != 1 else ''} దొరికారు. ASKODOX appలో request ACTIVEగా ఉంది; "
+                    "exact match/availability confirm అయిన వెంటనే result update అవుతుంది."
+                )
+
             delivery = self.notifications.dispatch_plan(request, plan)
             sent = int(delivery.get("sent") or 0)
             failed = int(delivery.get("failed") or 0)
@@ -328,8 +357,9 @@ class UniversalLiveCaptureService:
                 return (f"{prefix}సంబంధిత users దొరికారు, కానీ WhatsApp delivery ప్రస్తుతం fail అయింది. "
                         "మీ request ACTIVEగా ఉంచాను.")
 
+        channel = "ASKODOX appలో" if app_request else "WhatsAppలో"
         return (f"{prefix}మీ request ACTIVEగా ఉంచాను. ఇప్పుడు direct match లేదు. "
-                "సంబంధిత వ్యక్తి/product/service దొరికిన వెంటనే మీకు WhatsAppలో చెప్తాను.")
+                f"సంబంధిత వ్యక్తి/product/service దొరికిన వెంటనే మీకు {channel} చెప్తాను.")
 
     @classmethod
     def _quantity_followup(cls, text: str) -> Optional[tuple[float, str]]:
