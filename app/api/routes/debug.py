@@ -1,9 +1,10 @@
 import os
-import re
 
 import imageio_ffmpeg
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+
+from app.models.session import ConversationStep
 
 router = APIRouter(prefix="/debug", tags=["Debug"])
 
@@ -13,85 +14,31 @@ class DebugMessageRequest(BaseModel):
     message: str
 
 
-def _extract_budget(message: str) -> int | None:
-    match = re.search(
-        r"(?:₹|rs\.?|inr|under|below|budget(?:\s+is)?|లోపు|కింద)\s*[:₹-]?\s*(\d[\d,]*)",
-        message,
-        flags=re.IGNORECASE,
-    )
-    if match is None:
-        numbers = re.findall(r"\b\d[\d,]{2,}\b", message)
-        if not numbers:
-            return None
-        raw = numbers[-1]
-    else:
-        raw = match.group(1)
+def _prepare_askodox_app_identity(container, sender_mobile: str) -> None:
+    """Make an app-* identity eligible for the universal runtime without WhatsApp onboarding.
 
-    try:
-        return int(raw.replace(",", ""))
-    except ValueError:
-        return None
-
-
-def _detect_buy_item(message: str) -> str | None:
-    text = message.lower()
-    aliases = (
-        (
-            "mobile phone",
-            ("mobile phone", "smartphone", "mobile", "phone", "మొబైల్", "ఫోన్"),
-        ),
-        ("laptop", ("laptop", "ల్యాప్‌టాప్")),
-        ("tv", ("television", "smart tv", " tv", "టీవీ")),
-        ("refrigerator", ("refrigerator", "fridge", "ఫ్రిజ్")),
-        ("washing machine", ("washing machine", "వాషింగ్ మెషిన్")),
-    )
-    for canonical, terms in aliases:
-        if any(term in text for term in terms):
-            return canonical
-    return None
-
-
-def _process_askodox_app_message(message: str) -> str:
-    """Handle Flutter app requests without entering WhatsApp onboarding state."""
-    clean = message.strip()
-    item = _detect_buy_item(clean)
-    budget = _extract_budget(clean)
-
-    if item:
-        budget_text = f"₹{budget:,}" if budget is not None else "not specified"
-        return (
-            "✅ ASKODOX understood your request.\n\n"
-            "Intent: Buy\n"
-            f"Item: {item}\n"
-            f"Budget: {budget_text}\n\n"
-            "Your requirement is ready for local seller matching. "
-            "Share or confirm your area/location so ASKODOX can continue "
-            "with real nearby stock and prices."
+    ASKODOX mobile installs use a persistent app-* sender id. The universal brain
+    expects a registered identity before it will persist NEED/OFFER records. App
+    sessions already own their UI onboarding, so create a lightweight internal
+    identity and put its conversation session directly at MAIN_MENU. This keeps
+    Flutter on the exact same Universal AI/Deal Brain path as registered WhatsApp
+    users while avoiding the legacy phone/name/language registration prompts.
+    """
+    existing = container.user_repository.find_by_whatsapp_mobile(sender_mobile)
+    if not existing or not int(existing.get("registration_complete") or 0):
+        container.user_repository.create_or_update_registration(
+            whatsapp_mobile=sender_mobile,
+            entered_mobile=sender_mobile,
+            name="ASKODOX App User",
+            language="English",
+            area="",
         )
 
-    lower = clean.lower()
-    if any(term in lower for term in ("sell", "అమ్మ", "విక్రయ")):
-        return (
-            "✅ ASKODOX understood that you want to sell something. "
-            "Tell me the item, quantity, expected price, condition/quality and location."
-        )
-
-    if any(term in lower for term in ("job", "work", "పని", "ఉద్యోగ")):
-        return (
-            "✅ ASKODOX understood that you need work. "
-            "Tell me the work type, location, availability and experience."
-        )
-
-    if any(term in lower for term in ("service", "plumber", "electrician", "సర్వీస్")):
-        return (
-            "✅ ASKODOX understood that you need a service. "
-            "Tell me the service type, location and preferred time."
-        )
-
-    return (
-        "ASKODOX is ready. Tell me what you want to buy, sell, find, book, "
-        "or get done. I will capture the requirement and ask only for missing details."
-    )
+    session = container.session_registry.get(sender_mobile)
+    if session.step != ConversationStep.MAIN_MENU:
+        session.step = ConversationStep.MAIN_MENU
+        session.data.clear()
+        container.session_registry.save(sender_mobile)
 
 
 @router.post("/message")
@@ -99,17 +46,21 @@ def debug_message(
     payload: DebugMessageRequest,
     request: Request,
 ) -> dict:
-    # Flutter ASKODOX sessions deliberately use an app-* sender ID. They already
-    # own onboarding/profile state on-device, so they must not be routed through
-    # the legacy WhatsApp language/name/area registration state machine.
-    if payload.sender_mobile.strip().lower().startswith("app-"):
-        reply = _process_askodox_app_message(payload.message)
-    else:
-        container = request.app.state.container
-        reply = container.conversation_service.process(
-            sender_mobile=payload.sender_mobile,
-            message=payload.message,
-        )
+    container = request.app.state.container
+    sender_mobile = payload.sender_mobile.strip()
+
+    # Flutter and WhatsApp now share the same UniversalAwareConversationService:
+    # response commands -> product/RAG intelligence -> image text follow-ups ->
+    # Gemini UniversalRequestExtractor -> universal demand capture -> matcher ->
+    # targeting/notification -> escalation/fallback runtimes. The only app-only
+    # behavior is bypassing legacy WhatsApp registration prompts.
+    if sender_mobile.lower().startswith("app-"):
+        _prepare_askodox_app_identity(container, sender_mobile)
+
+    reply = container.conversation_service.process(
+        sender_mobile=sender_mobile,
+        message=payload.message,
+    )
 
     return {
         "sender_mobile": payload.sender_mobile,
