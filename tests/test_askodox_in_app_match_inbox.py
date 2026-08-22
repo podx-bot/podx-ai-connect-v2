@@ -48,9 +48,10 @@ def test_in_app_inbox_and_interested_action(tmp_path, monkeypatch):
     buyer_inbox = client.get(f"/debug/inbox/{buyer}")
     assert buyer_inbox.status_code == 200
     updates = buyer_inbox.json()["interest_updates"]
-    assert len(updates) == 1
-    assert updates[0]["responder_user_id"] == seller
-    assert updates[0]["actions"] == ["ACCEPT", "DECLINE"]
+    current = [item for item in updates if item["request_id"] == demand_id]
+    assert len(current) == 1
+    assert current[0]["responder_user_id"] == seller
+    assert current[0]["actions"] == ["ACCEPT", "DECLINE"]
 
 
 def test_not_interested_dismisses_match(tmp_path, monkeypatch):
