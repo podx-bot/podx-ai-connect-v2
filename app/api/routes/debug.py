@@ -1,7 +1,7 @@
 import os
 
 import imageio_ffmpeg
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.models.session import ConversationStep
@@ -20,6 +20,12 @@ class DebugLocationRequest(BaseModel):
     longitude: float = Field(ge=-180.0, le=180.0)
     location_name: str | None = None
     location_address: str | None = None
+
+
+class DebugMatchActionRequest(BaseModel):
+    user_id: str
+    request_id: int
+    action: str
 
 
 def _prepare_askodox_app_identity(container, sender_mobile: str) -> None:
@@ -106,6 +112,128 @@ def debug_location(
         "latitude": payload.latitude,
         "longitude": payload.longitude,
         "reply": reply,
+    }
+
+
+@router.get("/inbox/{user_id}")
+def debug_inbox(user_id: str, request: Request) -> dict:
+    """Return ASKODOX in-app match cards and interest updates for one app identity."""
+    container = request.app.state.container
+    app_user = user_id.strip()
+    if not app_user.lower().startswith("app-"):
+        raise HTTPException(status_code=400, detail="ASKODOX app user id required")
+
+    _prepare_askodox_app_identity(container, app_user)
+    db = container.database
+
+    match_rows = db.fetchall(
+        """
+        SELECT n.request_id,n.requester_user_id,n.target_user_id,n.wave,
+               n.distance_km,n.relevance_score,n.status AS notification_status,
+               n.created_at,
+               d.side,d.domain,d.subject,d.quantity,d.unit,d.price,d.currency,
+               d.when_text,d.location_text,d.latitude,d.longitude,d.status AS request_status
+        FROM universal_notifications n
+        JOIN universal_need_offer_records d ON d.id=n.request_id
+        WHERE n.target_user_id=? AND n.status IN ('SENT','INTERESTED')
+        ORDER BY n.id DESC
+        LIMIT 50
+        """,
+        (app_user,),
+    )
+
+    interest_rows = db.fetchall(
+        """
+        SELECT i.request_id,i.requester_user_id,i.responder_user_id,
+               i.responder_status,i.requester_status,i.qualification_status,
+               i.contact_shared,i.created_at,i.updated_at,
+               d.side,d.domain,d.subject,d.quantity,d.unit,d.price,d.currency,
+               d.when_text,d.location_text,d.status AS request_status
+        FROM universal_interests i
+        JOIN universal_need_offer_records d ON d.id=i.request_id
+        WHERE i.requester_user_id=?
+        ORDER BY i.id DESC
+        LIMIT 50
+        """,
+        (app_user,),
+    )
+
+    matches = []
+    for row in match_rows:
+        item = dict(row)
+        item["actions"] = ["INTERESTED", "NOT_INTERESTED"]
+        item["card_type"] = "MATCH"
+        matches.append(item)
+
+    updates = []
+    for row in interest_rows:
+        item = dict(row)
+        item["card_type"] = "INTEREST_UPDATE"
+        item["actions"] = ["ACCEPT", "DECLINE"] if item.get("requester_status") == "PENDING" else []
+        updates.append(item)
+
+    return {
+        "user_id": app_user,
+        "channel": "in_app",
+        "match_count": len(matches),
+        "interest_update_count": len(updates),
+        "matches": matches,
+        "interest_updates": updates,
+    }
+
+
+@router.post("/match-action")
+def debug_match_action(payload: DebugMatchActionRequest, request: Request) -> dict:
+    """Handle Interested/Not Interested directly inside ASKODOX without WhatsApp."""
+    container = request.app.state.container
+    app_user = payload.user_id.strip()
+    action = payload.action.strip().upper().replace(" ", "_")
+    if not app_user.lower().startswith("app-"):
+        raise HTTPException(status_code=400, detail="ASKODOX app user id required")
+    if action not in {"INTERESTED", "NOT_INTERESTED"}:
+        raise HTTPException(status_code=400, detail="action must be INTERESTED or NOT_INTERESTED")
+
+    _prepare_askodox_app_identity(container, app_user)
+    demand = container.universal_demand_repository.get(payload.request_id)
+    if not demand or str(demand.get("status") or "").upper() != "ACTIVE":
+        raise HTTPException(status_code=404, detail="active match request not found")
+    if not container.universal_notification_repository.was_targeted(payload.request_id, app_user):
+        raise HTTPException(status_code=403, detail="this match was not targeted to this user")
+
+    if action == "NOT_INTERESTED":
+        container.database.execute(
+            """
+            UPDATE universal_notifications
+            SET status='DISMISSED',updated_at=CURRENT_TIMESTAMP
+            WHERE request_id=? AND target_user_id=?
+            """,
+            (payload.request_id, app_user),
+        )
+        return {
+            "status": "DISMISSED",
+            "request_id": payload.request_id,
+            "user_id": app_user,
+            "channel": "in_app",
+        }
+
+    result = container.universal_notification_service.register_interest(
+        demand,
+        app_user,
+        None,
+    )
+    container.database.execute(
+        """
+        UPDATE universal_notifications
+        SET status='INTERESTED',updated_at=CURRENT_TIMESTAMP
+        WHERE request_id=? AND target_user_id=?
+        """,
+        (payload.request_id, app_user),
+    )
+    return {
+        **result,
+        "action": "INTERESTED",
+        "user_id": app_user,
+        "channel": "in_app",
     }
 
 
