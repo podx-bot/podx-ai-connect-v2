@@ -2,7 +2,7 @@ import os
 
 import imageio_ffmpeg
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.session import ConversationStep
 
@@ -12,6 +12,14 @@ router = APIRouter(prefix="/debug", tags=["Debug"])
 class DebugMessageRequest(BaseModel):
     sender_mobile: str
     message: str
+
+
+class DebugLocationRequest(BaseModel):
+    sender_mobile: str
+    latitude: float = Field(ge=-90.0, le=90.0)
+    longitude: float = Field(ge=-180.0, le=180.0)
+    location_name: str | None = None
+    location_address: str | None = None
 
 
 def _prepare_askodox_app_identity(container, sender_mobile: str) -> None:
@@ -65,6 +73,38 @@ def debug_message(
     return {
         "sender_mobile": payload.sender_mobile,
         "message": payload.message,
+        "reply": reply,
+    }
+
+
+@router.post("/location")
+def debug_location(
+    payload: DebugLocationRequest,
+    request: Request,
+) -> dict:
+    """Merge an ASKODOX app GPS/map pin into the latest pending universal request."""
+    container = request.app.state.container
+    sender_mobile = payload.sender_mobile.strip()
+    if sender_mobile.lower().startswith("app-"):
+        _prepare_askodox_app_identity(container, sender_mobile)
+
+    reply = container.universal_live_capture_service.handle_location(
+        sender_mobile=sender_mobile,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        location_name=(payload.location_name or "").strip() or None,
+        location_address=(payload.location_address or "").strip() or None,
+    )
+    if reply is None:
+        reply = (
+            "📍 Location save అయింది. ప్రస్తుతం location కోసం waitingలో ఉన్న request లేదు. "
+            "మీ next requestకి ఈ location nearby matchingలో ఉపయోగిస్తాను."
+        )
+
+    return {
+        "sender_mobile": payload.sender_mobile,
+        "latitude": payload.latitude,
+        "longitude": payload.longitude,
         "reply": reply,
     }
 
