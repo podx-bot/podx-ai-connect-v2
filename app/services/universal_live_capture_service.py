@@ -39,6 +39,14 @@ class UniversalLiveCaptureService:
         "please", "want", "need", "i want", "i need", "want it", "need it",
         "చేయండి", "ఉండాలి", "चाहिए", "मुझे चाहिए",
     }
+    LOCATION_PREFIXES = ("in ", "at ", "near ", "around ", "area ")
+    LOCATION_BLOCK_WORDS = {
+        "want", "need", "buy", "sell", "job", "work", "service", "ride",
+        "price", "budget", "delivery", "today", "tomorrow", "urgent",
+        "available", "availability", "quantity", "size", "weight",
+        "కావాలి", "కొనాలి", "అమ్మాలి", "పని", "ఉద్యోగం", "సర్వీస్",
+        "ధర", "రేట్", "ఈరోజు", "రేపు", "అర్జెంట్",
+    }
 
     def __init__(self, extractor, demand_repository, matcher, targeting_service,
                  notification_service, notification_repository, user_repository,
@@ -80,6 +88,10 @@ class UniversalLiveCaptureService:
             )
             if reply is not None:
                 return reply
+
+        location_reply = self._merge_location_text_followup(sender_mobile, text)
+        if location_reply is not None:
+            return location_reply
 
         extracted = self.extractor.extract(text)
         if not extracted.get("success"):
@@ -134,6 +146,28 @@ class UniversalLiveCaptureService:
         stored = self.demands.get(int(pending["id"])) or pending
         self._trigger_demand_intelligence(stored)
         return self._match_target_notify(stored, location_saved=True)
+
+    def _merge_location_text_followup(self, sender_mobile: str, text: str) -> Optional[str]:
+        pending = self.demands.latest_active_for_user_missing_location(sender_mobile)
+        if pending is None:
+            return None
+        location_text = self._location_text_followup(text)
+        if location_text is None:
+            return None
+        updater = getattr(self.demands, "update_location_text", None)
+        if not callable(updater):
+            return None
+        updater(int(pending["id"]), location_text)
+        stored = self.demands.get(int(pending["id"])) or {**pending, "location_text": location_text}
+        subject = str(stored.get("subject") or "మీ requirement")
+        self._trigger_demand_intelligence(stored)
+        result = self._match_target_notify(stored)
+        return (
+            f"📍 {location_text} locationని '{subject}' requirementకి add చేశాను. "
+            "ముందు చెప్పిన requirement అలాగే ఉంచాను.\n"
+            f"{result}\n"
+            "Exact distance ranking కోసం కావాలంటే Current Location కూడా share చేయండి."
+        )
 
     def _revise_latest_quantity(self, sender_mobile: str, quantity: float, unit: str) -> Optional[str]:
         latest = getattr(self.demands, "latest_active_for_user", None)
@@ -327,6 +361,24 @@ class UniversalLiveCaptureService:
             if remaining in allowed_fillers:
                 return canonical
         return None
+
+    @classmethod
+    def _location_text_followup(cls, text: str) -> Optional[str]:
+        value = " ".join(str(text or "").strip().split()).strip(" .,!?:;")
+        if not value or len(value) > 80 or any(ch.isdigit() for ch in value):
+            return None
+        lowered = value.casefold()
+        for prefix in cls.LOCATION_PREFIXES:
+            if lowered.startswith(prefix):
+                value = value[len(prefix):].strip(" .,!?:;")
+                lowered = value.casefold()
+                break
+        if not value or len(value.split()) > 6:
+            return None
+        tokens = set(re.findall(r"[\w]+", lowered, flags=re.UNICODE))
+        if tokens & cls.LOCATION_BLOCK_WORDS:
+            return None
+        return value
 
     @classmethod
     def _skip_text(cls, text: str) -> bool:
