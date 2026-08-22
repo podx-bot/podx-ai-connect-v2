@@ -129,6 +129,18 @@ class UniversalDemandRepository:
             ).fetchone()
         return self._row(row) if row else None
 
+    def update_location_text(self, demand_id: int, location_text: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE {self.TABLE}
+                SET location_text = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(location_text).strip(), now, int(demand_id)),
+            )
+
     def update_location(
         self,
         demand_id: int,
