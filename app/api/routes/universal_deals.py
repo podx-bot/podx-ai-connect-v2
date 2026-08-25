@@ -86,9 +86,12 @@ def create_deal(payload: UniversalDealCreateRequest, request: Request) -> dict:
         )
 
     item = dict(created)
+    deal_id = int(item["id"])
     return {
-        "id": item["id"],
-        "deal_id": item["id"],
+        "id": deal_id,
+        "deal_id": deal_id,
+        "request_id": deal_id,
+        "contract_version": 1,
         "status": item.get("status"),
         "side": item.get("side"),
         "domain": item.get("domain"),
@@ -152,6 +155,8 @@ def get_matches(deal_id: int, request: Request) -> dict:
 
     return {
         "deal_id": deal_id,
+        "request_id": deal_id,
+        "contract_version": 1,
         "status": demand.get("status"),
         "match_count": len(matches),
         "matches": matches,
@@ -181,5 +186,7 @@ def accept_match(deal_id: int, payload: AcceptMatchRequest, request: Request) ->
     return {
         **result,
         "deal_id": deal_id,
+        "request_id": deal_id,
+        "contract_version": 1,
         "match_id": responder,
     }
