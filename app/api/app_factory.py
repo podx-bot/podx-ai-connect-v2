@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.appointment_location_middleware import AppointmentLocationMiddleware
 from app.api.routes.debug import router as debug_router
+from app.api.routes.deal_negotiation import router as deal_negotiation_router
 from app.api.routes.fast_webhook import router as webhook_router
 from app.api.routes.health import router as health_router
 from app.api.routes.in_app_deal import router as in_app_deal_router
@@ -171,6 +172,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook_router)
     app.include_router(debug_router)
     app.include_router(in_app_deal_router)
+    app.include_router(deal_negotiation_router)
 
     @app.on_event("shutdown")
     def shutdown_event() -> None:
