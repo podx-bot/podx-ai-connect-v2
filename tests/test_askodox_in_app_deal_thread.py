@@ -89,3 +89,42 @@ def test_non_participant_cannot_read_accepted_thread(tmp_path, monkeypatch):
 
     response = client.get(f"/debug/deal-thread/{demand_id}/app-outsider/{seller}")
     assert response.status_code == 403
+
+
+def test_repeated_inputs_stay_on_one_active_deal_thread(tmp_path, monkeypatch):
+    client, container = _client(tmp_path, monkeypatch)
+    buyer, seller = "kernel-buyer", "kernel-seller"
+    demand_id = _seed_interest(container, buyer, seller)
+
+    decision = client.post("/debug/interest-action", json={
+        "user_id": buyer,
+        "request_id": demand_id,
+        "responder_user_id": seller,
+        "action": "ACCEPT",
+    })
+    assert decision.status_code == 200
+    assert decision.json()["conversation_ready"] is True
+
+    messages = [
+        "TEXT: Need delivery by 6 PM",
+        "VOICE: Please keep the same chicken order",
+        "OCR: Photo says 2 kg chicken",
+    ]
+    for message in messages:
+        sent = client.post("/debug/deal-message", json={
+            "user_id": buyer,
+            "request_id": demand_id,
+            "other_user_id": seller,
+            "message": message,
+        })
+        assert sent.status_code == 200
+        assert sent.json()["status"] == "SENT"
+
+    thread = client.get(f"/debug/deal-thread/{demand_id}/{buyer}/{seller}")
+    assert thread.status_code == 200
+    data = thread.json()
+    assert data["status"] == "OPEN"
+    assert data["deal"]["subject"] == "chicken"
+    thread_text = [m["message_text"] for m in data["messages"]]
+    for message in messages:
+        assert message in thread_text
