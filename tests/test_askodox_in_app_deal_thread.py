@@ -93,7 +93,7 @@ def test_non_participant_cannot_read_accepted_thread(tmp_path, monkeypatch):
 
 def test_repeated_inputs_stay_on_one_active_deal_thread(tmp_path, monkeypatch):
     client, container = _client(tmp_path, monkeypatch)
-    buyer, seller = "kernel-buyer", "kernel-seller"
+    buyer, seller = "app-kernel-buyer", "app-kernel-seller"
     demand_id = _seed_interest(container, buyer, seller)
 
     decision = client.post("/debug/interest-action", json={
@@ -128,3 +128,13 @@ def test_repeated_inputs_stay_on_one_active_deal_thread(tmp_path, monkeypatch):
     thread_text = [m["message_text"] for m in data["messages"]]
     for message in messages:
         assert message in thread_text
+
+    thread_count = container.database.fetchone(
+        """
+        SELECT COUNT(*) AS total
+        FROM in_app_deal_threads
+        WHERE request_id=? AND buyer_user_id=? AND seller_user_id=?
+        """,
+        (demand_id, buyer, seller),
+    )
+    assert int(thread_count["total"]) == 1
