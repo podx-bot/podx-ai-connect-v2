@@ -149,6 +149,7 @@ class ConversationService:
         if session.step == ConversationStep.EMPLOYER_LOCATION:
             return self._reply(sender_mobile, "📍 దయచేసి text కాకుండా WhatsApp Location share చేయండి.")
 
+
         if session.step == ConversationStep.WORKER_CATEGORY:
             category = self.CATEGORY_MAP.get(normalized)
             if category is None:
@@ -192,6 +193,7 @@ class ConversationService:
             ConversationStep.EMPLOYER_SERVICE: ConversationStep.MAIN_MENU,
             ConversationStep.EMPLOYER_REQUIREMENT: ConversationStep.EMPLOYER_SERVICE,
             ConversationStep.EMPLOYER_LOCATION: ConversationStep.EMPLOYER_REQUIREMENT,
+
         }
         if session.step == ConversationStep.MAIN_MENU:
             return self._reply(sender_mobile, self._main_menu())
@@ -214,6 +216,7 @@ class ConversationService:
             ConversationStep.EMPLOYER_SERVICE: self._employer_service_menu(),
             ConversationStep.EMPLOYER_REQUIREMENT: "దయచేసి మీ job requirement వివరాలు పంపండి.",
             ConversationStep.EMPLOYER_LOCATION: "📍 చివరి స్టెప్: WhatsApp Attachment ద్వారా మీ Job Location share చేయండి.",
+
         }
         return self._reply(sender_mobile, prompts.get(target, "Previous stepకి వచ్చారు."))
 
@@ -234,6 +237,7 @@ class ConversationService:
     @staticmethod
     def _category_menu() -> str:
         return "💼 మీరు ఏ పని కోసం చూస్తున్నారు?\n\n1. Delivery\n2. Catering\n3. Warehouse\n4. Hotel\n5. House Cleaning\n6. Driver\n7. AC Technician\n8. Electrician\n9. Other"
+
 
     @staticmethod
     def _employer_service_menu() -> str:
