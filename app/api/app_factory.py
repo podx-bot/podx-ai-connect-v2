@@ -6,6 +6,7 @@ from app.api.routes.deal_negotiation import router as deal_negotiation_router
 from app.api.routes.fast_webhook import router as webhook_router
 from app.api.routes.health import router as health_router
 from app.api.routes.in_app_deal import router as in_app_deal_router
+from app.api.routes.universal_deals import router as universal_deals_router
 from app.core.universal_commerce_container import UniversalCommerceAppContainer
 from app.repositories.conversation_observability_repository import ConversationObservabilityRepository
 from app.repositories.conversation_turn_ledger_repository import ConversationTurnLedgerRepository
@@ -173,6 +174,7 @@ def create_app() -> FastAPI:
     app.include_router(debug_router)
     app.include_router(in_app_deal_router)
     app.include_router(deal_negotiation_router)
+    app.include_router(universal_deals_router)
 
     @app.on_event("shutdown")
     def shutdown_event() -> None:
